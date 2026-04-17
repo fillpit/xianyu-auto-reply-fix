@@ -25,6 +25,7 @@ SUPPORTED_NOTIFICATION_TEMPLATE_TYPES = (
     'face_verify',
     'password_login_success',
     'cookie_refresh_success',
+    'account_paused',
 )
 
 
@@ -81,6 +82,17 @@ Cookie数量: {cookie_count}
 Cookie数量: {cookie_count}
 
 账号已可正常使用。''',
+    'account_paused': '''🚫 账号已暂停
+
+账号: {account_id}
+状态: {status_note}
+原因: {pause_reason}
+时间: {time}
+
+说明: {error_message}
+验证入口: {verification_url}
+
+{action_hint}''',
 }
 
 

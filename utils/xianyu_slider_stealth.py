@@ -2655,13 +2655,15 @@ class XianyuSliderStealth:
         except Exception as e:
             logger.error(f"【{self.pure_user_id}】删除截图时出错: {e}")
 
-    def _wait_for_context_login(self, context, fallback_page, max_wait_time: int = 450, check_interval: int = 10) -> Tuple[bool, Any]:
+    def _wait_for_context_login(self, context, fallback_page, max_wait_time: int = 450, check_interval: int = 10,
+                                allow_active_slider_retry: bool = True) -> Tuple[bool, Any]:
         waited_time = 0
         monitor_page = fallback_page
 
         while waited_time < max_wait_time:
             monitor_page = self._select_monitor_page(context, monitor_page)
-            self._attempt_solve_slider_on_page(monitor_page)
+            if allow_active_slider_retry:
+                self._attempt_solve_slider_on_page(monitor_page)
 
             login_success, success_page, _ = self._probe_context_login_success(context, monitor_page)
             if login_success:
@@ -2825,7 +2827,13 @@ class XianyuSliderStealth:
         logger.info(f"【{self.pure_user_id}】等待二维码/人脸验证完成...")
         login_success = False
         try:
-            login_success, _ = self._wait_for_context_login(context, fallback_page, max_wait_time=450, check_interval=10)
+            login_success, _ = self._wait_for_context_login(
+                context,
+                fallback_page,
+                max_wait_time=450,
+                check_interval=10,
+                allow_active_slider_retry=False,
+            )
         finally:
             self._cleanup_verification_screenshots()
 
