@@ -795,6 +795,8 @@ def get_ip_failure_count(client_ip: str) -> int:
 # 账号密码登录会话管理
 password_login_sessions = {}  # {session_id: {'account_id': str, 'account': str, 'show_browser': bool, 'status': str, 'verification_url': str, 'qr_code_url': str, 'slider_instance': object, 'task': asyncio.Task, 'timestamp': float}}
 password_login_locks = defaultdict(lambda: asyncio.Lock())
+manual_cookie_import_sessions = {}  # {session_id: {'account_id': str, 'status': str, 'verification_url': str, 'screenshot_path': str, 'slider_instance': object, 'task': asyncio.Task, 'timestamp': float}}
+manual_cookie_import_locks = defaultdict(lambda: asyncio.Lock())
 
 # 不再需要单独的密码初始化，由数据库初始化时处理
 
@@ -2409,6 +2411,12 @@ async def xianyu_reply(req: RequestModel):
 class CookieIn(BaseModel):
     id: str
     value: str
+
+
+class ManualCookieImportRequest(BaseModel):
+    account_id: str
+    cookie: str
+    show_browser: bool = False
 
 
 class CookieStatusIn(BaseModel):
@@ -4197,6 +4205,20 @@ def _set_password_login_session_status(session_id: str, status: str, **fields):
         session['completed_at'] = None
 
 
+def _set_manual_cookie_import_session_status(session_id: str, status: str, **fields):
+    session = manual_cookie_import_sessions.get(session_id)
+    if not session:
+        return
+
+    session['status'] = status
+    session.update(fields)
+
+    if status in {'success', 'failed'}:
+        session['completed_at'] = time.time()
+    else:
+        session['completed_at'] = None
+
+
 def _empty_slider_session_stats() -> Dict[str, Any]:
     return {
         'has_data': False,
@@ -4268,10 +4290,14 @@ async def _execute_password_login(session_id: str, account_id: str, account: str
         import io
         
         # 创建 XianyuSliderStealth 实例
+        existing_cookie_info = db_manager.get_cookie_details(account_id) or {}
+        proxy_config = db_manager.get_cookie_proxy_config(account_id)
         slider_instance = XianyuSliderStealth(
             user_id=account_id,
             enable_learning=True,
-            headless=not show_browser
+            headless=not show_browser,
+            initial_cookies=existing_cookie_info.get('value', ''),
+            proxy=proxy_config,
         )
         slider_instance.risk_session_id = password_login_sessions.get(session_id, {}).get('risk_session_id') or session_id
         slider_instance.risk_trigger_scene = 'manual_password_refresh' if is_refresh_mode else 'password_login'
@@ -4751,6 +4777,234 @@ async def _execute_password_login(session_id: str, account_id: str, account: str
                 pass
         import traceback
         logger.error(traceback.format_exc())
+
+
+async def _execute_manual_cookie_import(
+    session_id: str,
+    account_id: str,
+    cookie_value: str,
+    show_browser: bool,
+    user_id: int,
+    current_user: Dict[str, Any],
+):
+    try:
+        from utils.xianyu_slider_stealth import XianyuSliderStealth, resolve_verification_url_from_cookie
+        from XianyuAutoAsync import XianyuLive
+
+        existing_cookie_info = db_manager.get_cookie_details(account_id) or {}
+        proxy_config = {
+            'proxy_type': existing_cookie_info.get('proxy_type', 'none'),
+            'proxy_host': existing_cookie_info.get('proxy_host', ''),
+            'proxy_port': existing_cookie_info.get('proxy_port', 0),
+            'proxy_user': existing_cookie_info.get('proxy_user', ''),
+            'proxy_pass': existing_cookie_info.get('proxy_pass', ''),
+        }
+        slider_instance = XianyuSliderStealth(
+            user_id=account_id,
+            enable_learning=True,
+            headless=not show_browser,
+            initial_cookies=cookie_value,
+            proxy=proxy_config,
+        )
+        manual_cookie_import_sessions[session_id]['slider_instance'] = slider_instance
+
+        def run_import():
+            try:
+                target_url = resolve_verification_url_from_cookie(cookie_value, proxy_config)
+                log_with_user('info', f"手动导入 Cookie 已解析 verification_url: {account_id}", current_user)
+
+                success, cookies_dict = slider_instance.run(target_url)
+                if not success or not cookies_dict:
+                    failure_message = slider_instance._get_slider_failure_message('滑块验证失败，请稍后重试')
+                    _set_manual_cookie_import_session_status(session_id, 'failed', error=failure_message)
+                    log_with_user('error', f"手动导入 Cookie 验证失败: {account_id}, 错误: {failure_message}", current_user)
+                    return
+
+                existing_cookie_dict = trans_cookies(cookie_value)
+                merge_result = XianyuLive.protected_merge_cookie_dicts(existing_cookie_dict, cookies_dict)
+                if merge_result['incoming_missing_protected_fields']:
+                    log_with_user(
+                        'warning',
+                        f"导入 Cookie 浏览器快照缺少关键字段，执行保护性合并: {', '.join(merge_result['incoming_missing_protected_fields'])}",
+                        current_user,
+                    )
+                if merge_result['preserved_protected_fields']:
+                    log_with_user(
+                        'warning',
+                        f"导入 Cookie 保护性保留旧字段: {', '.join(merge_result['preserved_protected_fields'])}",
+                        current_user,
+                    )
+
+                merged_cookies_dict = merge_result['merged_cookies_dict']
+                cookies_str = '; '.join([f"{k}={v}" for k, v in merged_cookies_dict.items()])
+
+                existing_same_user_cookie = db_manager.get_all_cookies(user_id)
+                is_new_account = account_id not in existing_same_user_cookie
+                if is_new_account:
+                    db_manager.save_cookie(account_id, cookies_str, user_id)
+                    if cookie_manager.manager:
+                        cookie_manager.manager.add_cookie(account_id, cookies_str, user_id=user_id)
+                else:
+                    db_manager.update_cookie_account_info(account_id, cookie_value=cookies_str)
+                    if cookie_manager.manager:
+                        if account_id in getattr(cookie_manager.manager, 'cookies', {}):
+                            cookie_manager.manager.update_cookie(account_id, cookies_str, save_to_db=False)
+                        else:
+                            cookie_manager.manager.add_cookie(account_id, cookies_str, user_id=user_id)
+
+                _set_manual_cookie_import_session_status(
+                    session_id,
+                    'success',
+                    account_id=account_id,
+                    is_new_account=is_new_account,
+                    cookie_count=len(merged_cookies_dict),
+                )
+                log_with_user(
+                    'info',
+                    f"手动导入 Cookie 验证成功并已保存: {account_id}, cookie_count={len(merged_cookies_dict)}",
+                    current_user,
+                )
+            except Exception as exc:
+                error_message = str(exc)
+                _set_manual_cookie_import_session_status(session_id, 'failed', error=error_message)
+                log_with_user('error', f"手动导入 Cookie 执行异常: {account_id}, 错误: {error_message}", current_user)
+                import traceback
+                logger.error(traceback.format_exc())
+            finally:
+                try:
+                    from utils.xianyu_slider_stealth import concurrency_manager
+                    concurrency_manager.unregister_instance(account_id)
+                except Exception:
+                    pass
+
+        import threading
+        login_thread = threading.Thread(target=run_import, daemon=True)
+        login_thread.start()
+    except Exception as exc:
+        _set_manual_cookie_import_session_status(session_id, 'failed', error=str(exc))
+        log_with_user('error', f"执行手动导入 Cookie 任务异常: {str(exc)}", current_user)
+        import traceback
+        logger.error(traceback.format_exc())
+
+
+@app.post("/manual-cookie-import")
+async def manual_cookie_import(
+    request: ManualCookieImportRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """手动导入 Cookie，并按单次调试链路执行真实浏览器滑块验证。"""
+    try:
+        account_id = str(request.account_id or '').strip()
+        cookie_value = str(request.cookie or '').replace('\ufeff', '').strip()
+        show_browser = bool(request.show_browser)
+        user_id = current_user['user_id']
+
+        if not account_id or not cookie_value:
+            return {'success': False, 'message': '账号ID和Cookie不能为空'}
+
+        existing_cookies = db_manager.get_all_cookies()
+        if account_id in existing_cookies:
+            user_cookies = db_manager.get_all_cookies(user_id)
+            if account_id not in user_cookies:
+                return {'success': False, 'message': '该账号ID已被其他用户使用'}
+
+        session_id = secrets.token_urlsafe(16)
+        manual_cookie_import_sessions[session_id] = {
+            'account_id': account_id,
+            'show_browser': show_browser,
+            'status': 'processing',
+            'verification_url': None,
+            'screenshot_path': None,
+            'verification_type': None,
+            'slider_instance': None,
+            'task': None,
+            'timestamp': time.time(),
+            'completed_at': None,
+            'user_id': user_id,
+        }
+
+        task = asyncio.create_task(_execute_manual_cookie_import(
+            session_id,
+            account_id,
+            cookie_value,
+            show_browser,
+            user_id,
+            current_user,
+        ))
+        manual_cookie_import_sessions[session_id]['task'] = task
+
+        return {
+            'success': True,
+            'session_id': session_id,
+            'status': 'processing',
+            'message': 'Cookie导入验证任务已启动，请等待...',
+        }
+    except Exception as exc:
+        log_with_user('error', f"手动导入 Cookie 异常: {str(exc)}", current_user)
+        import traceback
+        logger.error(traceback.format_exc())
+        return {'success': False, 'message': f'手动导入 Cookie 失败: {str(exc)}'}
+
+
+@app.get("/manual-cookie-import/check/{session_id}")
+async def check_manual_cookie_import_status(
+    session_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """检查手动导入 Cookie 的执行状态。"""
+    try:
+        current_time = time.time()
+        expired_sessions = [
+            sid for sid, session in manual_cookie_import_sessions.items()
+            if (
+                session.get('completed_at') and current_time - session['completed_at'] > 300
+            ) or current_time - session['timestamp'] > 3600
+        ]
+        for sid in expired_sessions:
+            if sid in manual_cookie_import_sessions:
+                del manual_cookie_import_sessions[sid]
+
+        if session_id not in manual_cookie_import_sessions:
+            return {'status': 'not_found', 'message': '会话不存在或已过期'}
+
+        session = manual_cookie_import_sessions[session_id]
+        if session['user_id'] != current_user['user_id']:
+            return {'status': 'forbidden', 'message': '无权限访问该会话'}
+
+        status = session['status']
+        if status == 'verification_required':
+            screenshot_path = session.get('screenshot_path')
+            verification_url = session.get('verification_url')
+            verification_type = session.get('verification_type') or '身份验证'
+            return {
+                'status': 'verification_required',
+                'verification_url': verification_url,
+                'screenshot_path': screenshot_path,
+                'verification_type': verification_type,
+                'message': f'需要{verification_type}，请查看验证截图' if screenshot_path else f'需要{verification_type}，请点击验证链接',
+            }
+        if status == 'success':
+            return {
+                'status': 'success',
+                'message': f'账号 {session["account_id"]} Cookie 导入并验证成功',
+                'account_id': session['account_id'],
+                'is_new_account': session.get('is_new_account', False),
+                'cookie_count': session.get('cookie_count', 0),
+            }
+        if status == 'failed':
+            error_msg = session.get('error', 'Cookie 导入验证失败')
+            return {
+                'status': 'failed',
+                'message': error_msg,
+                'error': error_msg,
+            }
+        return {
+            'status': 'processing',
+            'message': 'Cookie 导入验证处理中，请稍候...',
+        }
+    except Exception as exc:
+        log_with_user('error', f"检查手动导入 Cookie 状态异常: {str(exc)}", current_user)
+        return {'status': 'error', 'message': str(exc)}
 
 
 @app.post("/password-login")

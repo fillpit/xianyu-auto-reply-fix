@@ -540,7 +540,7 @@
             <div id="manualInputForm" style="display: none;">
               <div class="alert alert-info">
                 <i class="bi bi-info-circle me-2"></i>
-                <strong>提示：</strong>用于手动导入已有 Cookie，建议优先使用消息页 Cookie。导入后请尽快在账号设置中配置账密，便于后续刷新与恢复。
+                <strong>提示：</strong>用于手动导入已有 Cookie，并按真实浏览器链路立即验证当前滑块。建议优先使用消息页 Cookie。导入后请尽快在账号设置中配置账密，便于后续刷新与恢复。
               </div>
               <form id="addForm" class="row g-3">
                 <div class="col-md-3">
@@ -552,8 +552,16 @@
                   <input type="text" class="form-control" id="cookieValue" placeholder="完整Cookie字符串" required>
                 </div>
                 <div class="col-12">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="manualCookieShowBrowser" value="1">
+                    <label class="form-check-label" for="manualCookieShowBrowser">
+                      显示浏览器窗口（默认关闭，优先走无头验证；仅在本机排查时开启）
+                    </label>
+                  </div>
+                </div>
+                <div class="col-12">
                   <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-plus-lg me-1"></i>添加账号
+                    <i class="bi bi-plus-lg me-1"></i>导入并验证账号
                   </button>
                   <button type="button" class="btn btn-secondary ms-2" onclick="toggleManualInput()">
                     <i class="bi bi-x-circle me-1"></i>取消

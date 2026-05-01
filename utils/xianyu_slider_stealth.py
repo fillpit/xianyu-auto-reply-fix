@@ -18,9 +18,8 @@ import shutil
 import subprocess
 import re
 import sys
-import socket
 from datetime import datetime
-from urllib.parse import parse_qs, urlparse, urlencode, quote_plus
+from urllib.parse import parse_qs, urlparse
 from playwright.sync_api import sync_playwright as playwright_sync_playwright, ElementHandle
 try:
     from patchright.sync_api import sync_playwright as patchright_sync_playwright
@@ -139,10 +138,7 @@ def build_cookie_verification_sign(ts: str, token: str, data: str) -> str:
     return hashlib.md5(f"{token}&{ts}&34839810&{data}".encode("utf-8")).hexdigest()
 
 
-def probe_cookie_verification_from_cookie(
-    cookie_text: str,
-    proxy: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+def resolve_verification_url_from_cookie(cookie_text: str, proxy: Optional[Dict[str, Any]] = None) -> str:
     import requests
 
     cookies = parse_cookie_string(cookie_text)
@@ -219,45 +215,10 @@ def probe_cookie_verification_from_cookie(
     )
     response.raise_for_status()
     payload = response.json()
-    data_payload = payload.get("data") or {}
-    verification_url = str(data_payload.get("url") or "").strip() or None
-    ret_value = payload.get("ret") or []
-    success_ret = any("SUCCESS::调用成功" in str(ret) for ret in ret_value)
-    has_token_payload = any(
-        str(data_payload.get(field) or "").strip()
-        for field in ("accessToken", "refreshToken")
-    )
-
-    status = "unknown"
-    if verification_url:
-        status = "verification_required"
-    elif success_ret and has_token_payload:
-        status = "cookie_valid"
-
-    session_cookies = {}
-    try:
-        session_cookies = dict(session.cookies.get_dict())
-    except Exception:
-        session_cookies = dict(cookies)
-
-    return {
-        "status": status,
-        "verification_url": verification_url,
-        "payload": payload,
-        "session_cookies": session_cookies,
-        "success_ret": success_ret,
-        "has_token_payload": has_token_payload,
-    }
-
-
-def resolve_verification_url_from_cookie(cookie_text: str, proxy: Optional[Dict[str, Any]] = None) -> str:
-    probe_result = probe_cookie_verification_from_cookie(cookie_text, proxy=proxy)
-    verification_url = probe_result.get("verification_url")
-    if verification_url:
-        return verification_url
-    if probe_result.get("status") == "cookie_valid":
-        raise RuntimeError(f"Cookie 已直接有效，无需 verification_url: {probe_result.get('payload')}")
-    raise RuntimeError(f"未拿到最新 verification_url: {probe_result.get('payload')}")
+    verification_url = (payload.get("data") or {}).get("url", "")
+    if not verification_url:
+        raise RuntimeError(f"未拿到最新 verification_url: {payload}")
+    return verification_url
 
 
 class PasswordLoginVerificationError(Exception):
@@ -969,8 +930,7 @@ class XianyuSliderStealth:
     def __init__(self, user_id: str = "default", enable_learning: bool = True, headless: bool = True,
                  initial_cookies: Optional[str] = None, proxy: Optional[Dict[str, Any]] = None,
                  browser_channel: Optional[str] = None, executable_path: Optional[str] = None,
-                 slider_max_retries: int = 3, use_account_persistent_profile: bool = False,
-                 account_persistent_profile_dir: Optional[str] = None):
+                 slider_max_retries: int = 3):
         self.user_id = user_id
         self.enable_learning = enable_learning
         self.headless = headless  # 是否使用无头模式
@@ -978,14 +938,11 @@ class XianyuSliderStealth:
         self.proxy_config = dict(proxy or {})
         self.browser_channel = browser_channel or os.environ.get("XY_SLIDER_BROWSER_CHANNEL", "").strip() or None
         self.executable_path = executable_path or os.environ.get("XY_SLIDER_BROWSER_PATH", "").strip() or None
-        self._browser_channel_explicit = bool(self.browser_channel)
-        self._browser_path_explicit = bool(self.executable_path)
         self.slider_max_retries = max(1, min(int(slider_max_retries or 3), 4))
         self.project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         self.playwright_browser_name = os.environ.get("XY_SLIDER_PLAYWRIGHT_BROWSER", "chromium").strip() or "chromium"
         existing_playwright_cache_dir = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
         is_docker_env = os.environ.get("DOCKER_ENV", "").strip().lower() in {"1", "true", "yes", "on"}
-        self.is_docker_env = is_docker_env
         if existing_playwright_cache_dir and existing_playwright_cache_dir != "0":
             self.playwright_browser_cache_dir = existing_playwright_cache_dir
         elif is_docker_env and os.path.isdir("/ms-playwright"):
@@ -1007,13 +964,9 @@ class XianyuSliderStealth:
         self.keep_verification_screenshots = (
             os.environ.get("XY_KEEP_VERIFICATION_SCREENSHOT", "").strip().lower() in {"1", "true", "yes", "on"}
         )
-        headless_warmup_override = os.environ.get("XY_SLIDER_HEADLESS_WARMUP", "").strip().lower()
-        if headless_warmup_override:
-            self.disable_headless_warmup = headless_warmup_override not in {"1", "true", "yes", "on"}
-        else:
-            # Docker 无头容器里空白上下文更容易被风控直接判死，默认保留一次轻量预热；
-            # 桌面环境继续维持原来的“默认跳过预热”策略，避免把已有可用上下文搞脏。
-            self.disable_headless_warmup = not self.is_docker_env
+        self.disable_headless_warmup = (
+            os.environ.get("XY_SLIDER_HEADLESS_WARMUP", "").strip().lower() not in {"1", "true", "yes", "on"}
+        )
         backend_env = os.environ.get("XY_SLIDER_AUTOMATION_BACKEND", "").strip().lower()
         if backend_env in {"patchright", "playwright"}:
             self.automation_backend = backend_env
@@ -1025,25 +978,6 @@ class XianyuSliderStealth:
         self.page = None
         self.context = None
         self.local_browser_info = {}
-        try:
-            self.browser_cookie_warmup_probe_timeout_ms = max(
-                1000,
-                int(os.environ.get("XY_BROWSER_COOKIE_WARMUP_TIMEOUT_MS", "5000") or 5000),
-            )
-        except Exception:
-            self.browser_cookie_warmup_probe_timeout_ms = 5000
-        if not self.browser_channel and not self.executable_path:
-            detected_browser = self._detect_local_browser_info()
-            if detected_browser:
-                self.local_browser_info = dict(detected_browser)
-                detected_path = str(detected_browser.get("path") or "").strip()
-                detected_channel = str(detected_browser.get("channel") or "").strip()
-                if os.name == 'nt' and detected_channel:
-                    self.browser_channel = detected_channel
-                elif detected_path:
-                    self.executable_path = detected_path
-                elif detected_channel:
-                    self.browser_channel = detected_channel
         self.playwright = None
         self._concurrency_slot_registered = False
         
@@ -1108,14 +1042,14 @@ class XianyuSliderStealth:
         # 保存最后一次使用的轨迹参数（用于分析优化）
         self.last_trajectory_params = {}
 
-        if self.executable_path and not self.local_browser_info:
+        self.local_browser_info = {}
+        if self.executable_path:
             version_text = self._read_local_browser_version(self.executable_path)
             self.local_browser_info = {
                 "path": self.executable_path,
                 "version": version_text,
                 "major_version": (version_text.split(".", 1)[0] if version_text else ""),
                 "family": self._get_browser_family(),
-                "source": "explicit_path",
             }
 
     def _fail_login(self, message: str):
@@ -1637,71 +1571,31 @@ class XianyuSliderStealth:
         return False, ""
 
     def _detect_local_browser_info(self) -> Dict[str, Any]:
-        browser_candidates: List[Dict[str, str]] = []
-
-        if os.name == 'nt':
-            browser_candidates = [
-                {
-                    "family": "edge",
-                    "channel": "msedge",
-                    "path": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                },
-                {
-                    "family": "edge",
-                    "channel": "msedge",
-                    "path": r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-                },
-                {
-                    "family": "chrome",
-                    "channel": "chrome",
-                    "path": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                },
-                {
-                    "family": "chrome",
-                    "channel": "chrome",
-                    "path": r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                },
-            ]
-        elif sys.platform.startswith("linux"):
-            browser_candidates = [
-                {
-                    "family": "chrome",
-                    "channel": "",
-                    "path": "/usr/bin/google-chrome",
-                },
-                {
-                    "family": "chrome",
-                    "channel": "",
-                    "path": "/usr/bin/google-chrome-stable",
-                },
-                {
-                    "family": "chrome",
-                    "channel": "",
-                    "path": "/opt/google/chrome/chrome",
-                },
-                {
-                    "family": "chrome",
-                    "channel": "",
-                    "path": "/usr/bin/chromium",
-                },
-                {
-                    "family": "chrome",
-                    "channel": "",
-                    "path": "/usr/bin/chromium-browser",
-                },
-                {
-                    "family": "edge",
-                    "channel": "",
-                    "path": "/usr/bin/microsoft-edge",
-                },
-                {
-                    "family": "edge",
-                    "channel": "",
-                    "path": "/usr/bin/microsoft-edge-stable",
-                },
-            ]
-        else:
+        if os.name != 'nt':
             return {}
+
+        browser_candidates = [
+            {
+                "family": "edge",
+                "channel": "msedge",
+                "path": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            },
+            {
+                "family": "edge",
+                "channel": "msedge",
+                "path": r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            },
+            {
+                "family": "chrome",
+                "channel": "chrome",
+                "path": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            },
+            {
+                "family": "chrome",
+                "channel": "chrome",
+                "path": r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            },
+        ]
 
         for candidate in browser_candidates:
             browser_path = candidate["path"]
@@ -1715,7 +1609,6 @@ class XianyuSliderStealth:
                 version_match = re.search(r"(\d+)(?:\.\d+){0,3}", version_text)
                 if version_match:
                     info["major_version"] = version_match.group(1)
-            info["source"] = "local_system"
             return info
 
         return {}
@@ -1748,13 +1641,10 @@ class XianyuSliderStealth:
         elif sys.platform.startswith("linux"):
             search_rules = {
                 "chromium": [
-                    ("chromium-*", os.path.join("chrome-linux64", "chrome")),
                     ("chromium-*", os.path.join("chrome-linux", "chrome")),
-                    ("chromium_headless_shell-*", os.path.join("chrome-headless-shell-linux64", "chrome-headless-shell")),
                     ("chromium-*", os.path.join("chrome-linux", "headless_shell")),
                 ],
                 "chrome": [
-                    ("chrome-*", os.path.join("chrome-linux64", "chrome")),
                     ("chrome-*", os.path.join("chrome-linux", "chrome")),
                 ],
                 "msedge": [("msedge-*", os.path.join("msedge-linux", "msedge"))],
@@ -1942,17 +1832,6 @@ class XianyuSliderStealth:
             return "edge"
         return "chrome"
 
-    def _should_prefer_project_browser_for_playwright(self) -> bool:
-        if self.automation_backend != "playwright":
-            return False
-        if self._browser_channel_explicit or self._browser_path_explicit:
-            return False
-        current_source = str((getattr(self, "local_browser_info", None) or {}).get("source") or "").strip().lower()
-        return current_source in {"", "local_system"}
-
-    def _should_prefer_project_browser_for_headless_playwright(self) -> bool:
-        return self.headless and self._should_prefer_project_browser_for_playwright()
-
     def _get_sync_playwright_factory(self):
         if self.automation_backend == "patchright" and patchright_sync_playwright is not None:
             return patchright_sync_playwright
@@ -1963,18 +1842,6 @@ class XianyuSliderStealth:
         if override in {"off", "lite", "full"}:
             return override
 
-        # Docker 无头 Playwright 在落到系统兜底浏览器时，full 改写容易把风控打醒。
-        # 但如果已经锁定到项目内浏览器缓存/显式浏览器路径，full 模式反而更稳定。
-        if self.headless and self.is_docker_env and self.automation_backend == "playwright":
-            local_browser_info = getattr(self, "local_browser_info", None) or {}
-            if (
-                str(local_browser_info.get("source") or "") == "project_playwright_cache"
-                or bool(local_browser_info.get("version"))
-                or bool(self.executable_path)
-            ):
-                return "full"
-            return "lite"
-
         # Patchright 的 init_script 是通过路由注入的，额外脚本越多越容易把自己暴露出去。
         if self.headless and self.automation_backend == "patchright":
             return "off"
@@ -1984,26 +1851,8 @@ class XianyuSliderStealth:
     def _use_headless_stable_profile(self) -> bool:
         return bool(
             self.headless
-            and str(self.profile_id or "").startswith("win_chrome_")
-            and str(self.profile_id or "").endswith("_1600x900")
+            and str(self.profile_id or "").startswith("win_chrome_147_1600x900")
         )
-
-    def _should_prefer_docker_conservative_profile(self, has_learning: bool) -> bool:
-        if has_learning:
-            return False
-        if not (self.headless and self.is_docker_env and self.automation_backend == "playwright"):
-            return False
-        if not self._use_headless_stable_profile():
-            return False
-        local_browser_info = getattr(self, "local_browser_info", None) or {}
-        return bool(
-            str(local_browser_info.get("source") or "") == "project_playwright_cache"
-            or bool(local_browser_info.get("version"))
-            or bool(self.executable_path)
-        )
-
-    def _should_force_docker_cold_start_conservative(self, attempt: int, has_learning: bool) -> bool:
-        return attempt == 1 and self._should_prefer_docker_conservative_profile(has_learning)
 
     def _get_light_stealth_script(self, browser_features: Dict[str, Any]) -> str:
         locale = json.dumps(browser_features.get("locale") or "zh-CN", ensure_ascii=False)
@@ -2056,60 +1905,6 @@ class XianyuSliderStealth:
             f"backend={self.automation_backend}, headless={self.headless}"
         )
 
-    def _apply_runtime_stealth_script(self, runtime_target, browser_features: Dict[str, Any], mode: str = "full") -> bool:
-        if runtime_target is None or not browser_features:
-            return False
-
-        script = self._get_stealth_script(browser_features)
-        if str(mode or "").strip().lower() == "lite":
-            script = self._get_light_stealth_script(browser_features)
-
-        try:
-            runtime_target.evaluate(script)
-            return True
-        except Exception as e:
-            logger.debug(f"【{self.pure_user_id}】运行时注入{mode}反检测脚本失败: {e}")
-            return False
-
-    def _harden_password_slider_runtime(self, search_target=None):
-        if not (self.headless and self._is_password_login_scene() and self.page):
-            return
-
-        browser_features = dict(self.browser_features or {})
-        if not browser_features:
-            return
-
-        full_script = self._get_stealth_script(browser_features)
-        if not self._password_slider_runtime_hardened:
-            try:
-                self.page.add_init_script(full_script)
-            except Exception as e:
-                logger.debug(f"【{self.pure_user_id}】补充注册账密滑块 full init_script 失败: {e}")
-
-            try:
-                self._apply_headless_network_fingerprint(self.page, browser_features)
-            except Exception as e:
-                logger.debug(f"【{self.pure_user_id}】补强账密滑块网络指纹失败: {e}")
-
-            self._password_slider_runtime_hardened = True
-            logger.info(f"【{self.pure_user_id}】账密滑块场景已切换到 full runtime stealth 补强")
-
-        applied_targets = []
-        targets = []
-        if search_target is not None:
-            targets.append(("target", search_target))
-        if self.page is not None and self.page is not search_target:
-            targets.append(("page", self.page))
-
-        for target_name, runtime_target in targets:
-            if self._apply_runtime_stealth_script(runtime_target, browser_features, mode="full"):
-                applied_targets.append(target_name)
-
-        if applied_targets:
-            logger.info(
-                f"【{self.pure_user_id}】已对账密滑块当前文档补注入 full stealth: {', '.join(applied_targets)}"
-            )
-
     def _collect_runtime_debug_info(self, search_target=None) -> Dict[str, Any]:
         runtime_targets = []
         if search_target is not None:
@@ -2138,41 +1933,12 @@ class XianyuSliderStealth:
                     href: location.href,
                     title: document.title,
                     readyState: document.readyState,
-                    visibilityState: document.visibilityState,
                     userAgent: navigator.userAgent,
                     webdriver: navigator.webdriver,
                     languages: Array.from(navigator.languages || []),
                     platform: navigator.platform,
                     vendor: navigator.vendor,
                     brands,
-                    userAgentDataMobile: !!(navigator.userAgentData && navigator.userAgentData.mobile),
-                    innerWidth: window.innerWidth,
-                    innerHeight: window.innerHeight,
-                    outerWidth: window.outerWidth,
-                    outerHeight: window.outerHeight,
-                    devicePixelRatio: window.devicePixelRatio,
-                    screenWidth: screen.width,
-                    screenHeight: screen.height,
-                    availWidth: screen.availWidth,
-                    availHeight: screen.availHeight,
-                    pluginCount: navigator.plugins ? navigator.plugins.length : -1,
-                    mimeTypeCount: navigator.mimeTypes ? navigator.mimeTypes.length : -1,
-                    notificationPermission: (window.Notification && Notification.permission) || '',
-                    chromeKeys: window.chrome ? Object.keys(window.chrome).slice(0, 20) : [],
-                    localStorageKeys: (() => {
-                        try {
-                            return Object.keys(window.localStorage || {}).slice(0, 30);
-                        } catch (e) {
-                            return ['__unavailable__'];
-                        }
-                    })(),
-                    sessionStorageKeys: (() => {
-                        try {
-                            return Object.keys(window.sessionStorage || {}).slice(0, 30);
-                        } catch (e) {
-                            return ['__unavailable__'];
-                        }
-                    })(),
                     hasNocaptcha: !!document.querySelector('#nocaptcha'),
                     hasSliderButton: !!document.querySelector('#nc_1_n1z'),
                     hasSliderTrack: !!document.querySelector('#nc_1_n1t'),
@@ -2296,73 +2062,11 @@ class XianyuSliderStealth:
             proxy_settings["password"] = proxy_pass
         return proxy_settings
 
-    def _should_use_account_persistent_profile(self) -> bool:
-        return bool(getattr(self, "use_account_persistent_profile", False))
-
-    def _resolve_account_persistent_profile_dir(self) -> str:
-        profile_dir = str(getattr(self, "account_persistent_profile_dir", None) or "").strip()
-        if not profile_dir:
-            profile_dir = os.path.join(os.getcwd(), 'browser_data', f'user_{self.pure_user_id}')
-        os.makedirs(profile_dir, exist_ok=True)
-        return profile_dir
-
-    def _build_playwright_context_options(self, browser_features: Dict[str, Any]) -> Dict[str, Any]:
-        context_options: Dict[str, Any] = {
-            'user_agent': browser_features['user_agent'],
-            'locale': browser_features['locale'],
-            'timezone_id': browser_features['timezone_id'],
-            'color_scheme': browser_features['color_scheme'],
-            'extra_http_headers': {
-                'Accept-Language': browser_features['accept_lang']
-            },
-        }
-        if not self.headless:
-            context_options['no_viewport'] = True
-        else:
-            context_options.update({
-                'viewport': {'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
-                'screen': {'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
-                'device_scale_factor': browser_features['device_scale_factor'],
-                'is_mobile': browser_features['is_mobile'],
-                'has_touch': browser_features['has_touch'],
-            })
-        return context_options
-
     def _build_initial_cookie_payload(self) -> List[Dict[str, Any]]:
         if not self.initial_cookies:
             return []
 
-        cross_domain_cookie_names = {
-            "t",
-            "tracknick",
-            "isg",
-            "unb",
-            "cookie2",
-            "_tb_token_",
-            "sgcookie",
-            "csg",
-            "tfstk",
-            "_m_h5_tk",
-            "_m_h5_tk_enc",
-            "havana_lgc2_77",
-            "_hvn_lgc_",
-            "havana_lgc_exp",
-            "mtop_partitioned_detect",
-            "_samesite_flag_",
-            "sdkSilent",
-            "cna",
-            "x5sec",
-            "x5secdata",
-            "XSRF-TOKEN",
-            "thw",
-            "cbc",
-            "cnaui",
-            "aui",
-            "sca",
-        }
-        target_domains = [".goofish.com"]
         cookies: List[Dict[str, Any]] = []
-        seen = set()
         for cookie_pair in self.initial_cookies.split(";"):
             cookie_pair = cookie_pair.strip()
             if not cookie_pair or "=" not in cookie_pair:
@@ -2372,22 +2076,12 @@ class XianyuSliderStealth:
             value = value.strip()
             if not name:
                 continue
-
-            domains = list(target_domains)
-            if name in cross_domain_cookie_names:
-                domains.append(".taobao.com")
-
-            for domain in domains:
-                dedupe_key = (name, value, domain)
-                if dedupe_key in seen:
-                    continue
-                seen.add(dedupe_key)
-                cookies.append({
-                    "name": name,
-                    "value": value,
-                    "domain": domain,
-                    "path": "/",
-                })
+            cookies.append({
+                "name": name,
+                "value": value,
+                "domain": ".goofish.com",
+                "path": "/",
+            })
         return cookies
 
     def _try_reset_slider_error_state(self, search_root, slider_container=None) -> bool:
@@ -2416,8 +2110,7 @@ class XianyuSliderStealth:
                     logger.info(f"【{self.pure_user_id}】检测到滑块错误态，已点击重试元素: {selector}")
                     clicked = True
                     break
-                except Exception as selector_error:
-                    _mark_detached_runtime(selector_error)
+                except Exception:
                     continue
 
             if not clicked and slider_container:
@@ -2438,7 +2131,7 @@ class XianyuSliderStealth:
     def init_browser(self):
         """初始化浏览器 - 增强反检测版本"""
         try:
-            if self._should_prefer_project_browser_for_playwright():
+            if not self.browser_channel and not self.executable_path:
                 self._ensure_project_playwright_browser()
 
             # 启动 Playwright
@@ -2485,16 +2178,55 @@ class XianyuSliderStealth:
             if self.executable_path:
                 launch_options["executable_path"] = self.executable_path
                 logger.info(f"【{self.pure_user_id}】滑块浏览器使用本机可执行文件: {self.executable_path}")
-            context_options = self._build_playwright_context_options(browser_features)
-            launched_with_persistent_profile = False
+            try:
+                self.browser = self.playwright.chromium.launch(**launch_options)
+            except Exception as launch_error:
+                if self.headless and (launch_options.get("executable_path") or launch_options.get("channel")):
+                    fallback_options = dict(launch_options)
+                    fallback_options.pop("executable_path", None)
+                    fallback_options.pop("channel", None)
+                    logger.warning(
+                        f"【{self.pure_user_id}】指定浏览器无头启动失败，回退到 Playwright Chromium: {launch_error}"
+                    )
+                    self.browser = self.playwright.chromium.launch(**fallback_options)
+                else:
+                    raise
+            
+            # 验证浏览器已启动
+            if not self.browser or not self.browser.is_connected():
+                raise Exception("浏览器启动失败或连接已断开")
+            logger.info(f"【{self.pure_user_id}】浏览器启动成功，已连接: {self.browser.is_connected()}")
+            
+            # 创建上下文，使用随机特征
+            logger.info(f"【{self.pure_user_id}】创建浏览器上下文...")
+            
+            # 🔑 关键优化：添加更多真实浏览器特征
+            # 这里不要在 headless 下额外强塞 sec-ch-ua / CDP UA 覆写。
+            # 实测阿里 nocaptcha 会在本地阶段直接失败，而同一套轨迹在去掉这些覆写后可通过。
+            extra_headers = {'Accept-Language': browser_features['accept_lang']}
 
-            if self._should_use_account_persistent_profile():
-                user_data_dir = self._resolve_account_persistent_profile_dir()
-                persistent_launch_options = dict(launch_options)
-                persistent_launch_options.update(context_options)
-                persistent_launch_options.update({
-                    'accept_downloads': True,
-                    'ignore_https_errors': True,
+            context_options = {
+                'user_agent': browser_features['user_agent'],
+                'locale': browser_features['locale'],
+                'timezone_id': browser_features['timezone_id'],
+                'color_scheme': browser_features['color_scheme'],
+                'extra_http_headers': extra_headers,
+            }
+            
+            # 根据模式配置viewport和no_viewport
+            if not self.headless:
+                # 有头模式：使用 no_viewport=True 支持窗口最大化
+                # 注意：使用no_viewport时，不能设置device_scale_factor、is_mobile、has_touch
+                context_options['no_viewport'] = True  # 移除viewport限制，支持--start-maximized
+                self.context = self.browser.new_context(**context_options)
+            else:
+                # 无头模式：使用固定viewport
+                context_options.update({
+                    'viewport': {'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
+                    'screen': {'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
+                    'device_scale_factor': browser_features['device_scale_factor'],
+                    'is_mobile': browser_features['is_mobile'],
+                    'has_touch': browser_features['has_touch'],
                 })
                 logger.info(f"【{self.pure_user_id}】token_refresh滑块优先复用账号级浏览器目录: {user_data_dir}")
                 try:
@@ -5723,30 +5455,14 @@ class XianyuSliderStealth:
         login_success = False
         success_page = fallback_page
         try:
-            login_success, success_page = self._wait_for_context_login(
-                context,
-                fallback_page,
-                max_wait_time=wait_timeout,
-                check_interval=10,
-                verification_type=verification_type,
-                verification_url=frame_url,
-                verification_screenshot_path=screenshot_path,
-                notification_callback=notification_callback,
-                notification_scene=notification_scene,
-            )
+            login_success, _ = self._wait_for_context_login(context, fallback_page, max_wait_time=wait_timeout, check_interval=10)
         finally:
-            if screenshot_path:
-                logger.info(
-                    f"【{self.pure_user_id}】验证流程结束后暂不自动删除验证截图，"
-                    f"改由会话过期或手动清理: {screenshot_path}"
-                )
-            elif self.keep_verification_screenshots:
+            if self.keep_verification_screenshots:
                 logger.info(f"【{self.pure_user_id}】保留验证截图供后续调试")
+            else:
+                self._cleanup_verification_screenshots()
 
         if not login_success:
-            if self.last_login_error and '已超时/失效，请重新发起验证' in self.last_login_error:
-                logger.error(f"【{self.pure_user_id}】❌ {self.last_login_error}")
-                return None
             logger.error(f"【{self.pure_user_id}】❌ 等待验证超时（{wait_timeout}秒）")
             return self._fail_login(f"等待{type_name}超时（{wait_timeout}秒）")
 
@@ -5914,9 +5630,16 @@ class XianyuSliderStealth:
         )
 
         profile = browser_profiles[identity["profile_index"]]
-        preferred_profile = self._select_preferred_browser_profile(browser_profiles)
-        if preferred_profile:
-            profile = preferred_profile
+
+        # 实测阿里 nocaptcha 在 Windows 无头下对 1366x768 / 高 DPI 组合更敏感，
+        # 1600x900 + scale 1.0 的桌面画像通过率明显更稳，直接固定到这套。
+        if runtime_is_windows and self.headless:
+            preferred_profile = next(
+                (item for item in browser_profiles if item.get('window_size') == '1600,900'),
+                None,
+            )
+            if preferred_profile:
+                profile = preferred_profile
         lang, accept_lang = languages[identity["language_index"]]
 
         # 解析窗口大小
@@ -5957,6 +5680,334 @@ class XianyuSliderStealth:
             'battery_level': identity.get('battery_level', 0.76),
         }
         return self._apply_runtime_browser_profile(features)
+    
+    def _get_stealth_script(self, browser_features):
+        """获取增强反检测脚本"""
+        return f"""
+            // 隐藏webdriver属性
+            Object.defineProperty(navigator, 'webdriver', {{
+                get: () => undefined,
+            }});
+            
+            // 隐藏自动化相关属性
+            delete navigator.__proto__.webdriver;
+            delete window.navigator.webdriver;
+            delete window.navigator.__proto__.webdriver;
+            
+            // 覆盖plugins - 随机化
+            const pluginCount = {browser_features['plugin_count']};
+            Object.defineProperty(navigator, 'plugins', {{
+                get: () => Array.from({{length: pluginCount}}, (_, i) => ({{
+                    name: 'Plugin' + i,
+                    description: 'Plugin ' + i
+                }})),
+            }});
+            
+            // 覆盖languages
+            Object.defineProperty(navigator, 'languages', {{
+                get: () => ['{browser_features['locale']}', 'zh', 'en'],
+            }});
+            
+            // 模拟真实的屏幕信息 - 使用 Profile 一致值
+            Object.defineProperty(screen, 'availWidth', {{ get: () => {browser_features['viewport_width']} }});
+            Object.defineProperty(screen, 'availHeight', {{ get: () => {browser_features['viewport_height'] - 40} }});
+            Object.defineProperty(screen, 'width', {{ get: () => {browser_features['viewport_width']} }});
+            Object.defineProperty(screen, 'height', {{ get: () => {browser_features['viewport_height']} }});
+            Object.defineProperty(screen, 'colorDepth', {{ get: () => {browser_features['color_depth']} }});
+            Object.defineProperty(screen, 'pixelDepth', {{ get: () => {browser_features['color_depth']} }});
+            
+            // 隐藏自动化检测 - 使用 Profile 一致的硬件信息
+            Object.defineProperty(navigator, 'hardwareConcurrency', {{ get: () => {browser_features['hardware_concurrency']} }});
+            Object.defineProperty(navigator, 'deviceMemory', {{ get: () => {browser_features['device_memory']} }});
+            
+            // 模拟真实的时区
+            Object.defineProperty(Intl.DateTimeFormat.prototype, 'resolvedOptions', {{
+                value: function() {{
+                    return {{ timeZone: '{browser_features['timezone_id']}' }};
+                }}
+            }});
+            
+            // 隐藏自动化痕迹
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+            
+            // 模拟有头模式的特征 - 使用 Profile 一致值
+            Object.defineProperty(navigator, 'maxTouchPoints', {{ get: () => {browser_features['max_touch_points']} }});
+            Object.defineProperty(navigator, 'platform', {{ get: () => '{browser_features['platform']}' }});
+            Object.defineProperty(navigator, 'vendor', {{ get: () => '{browser_features['vendor']}' }});
+            Object.defineProperty(navigator, 'vendorSub', {{ get: () => '' }});
+            Object.defineProperty(navigator, 'productSub', {{ get: () => '20030107' }});
+            
+            // 模拟真实的连接信息 - 使用 Profile 一致值
+            Object.defineProperty(navigator, 'connection', {{
+                get: () => ({{
+                    effectiveType: "{browser_features['connection_type']}",
+                    rtt: {browser_features['connection_rtt']},
+                    downlink: {browser_features['connection_downlink']}
+                }})
+            }});
+            
+            // 隐藏无头模式特征
+            Object.defineProperty(navigator, 'headless', {{ get: () => undefined }});
+            Object.defineProperty(window, 'outerHeight', {{ get: () => {browser_features['viewport_height']} }});
+            Object.defineProperty(window, 'outerWidth', {{ get: () => {browser_features['viewport_width']} }});
+            
+            // 模拟真实的媒体设备
+            Object.defineProperty(navigator, 'mediaDevices', {{
+                get: () => ({{
+                    enumerateDevices: () => Promise.resolve([])
+                }}),
+            }});
+            
+            // 隐藏自动化检测特征
+            Object.defineProperty(navigator, 'webdriver', {{ get: () => undefined }});
+            Object.defineProperty(navigator, '__webdriver_script_fn', {{ get: () => undefined }});
+            Object.defineProperty(navigator, '__webdriver_evaluate', {{ get: () => undefined }});
+            Object.defineProperty(navigator, '__webdriver_unwrapped', {{ get: () => undefined }});
+            Object.defineProperty(navigator, '__fxdriver_evaluate', {{ get: () => undefined }});
+            Object.defineProperty(navigator, '__driver_evaluate', {{ get: () => undefined }});
+            Object.defineProperty(navigator, '__webdriver_script_func', {{ get: () => undefined }});
+            
+            // 隐藏Playwright特定的对象
+            delete window.playwright;
+            delete window.__playwright;
+            delete window.__pw_manual;
+            delete window.__pw_original;
+            
+            // 模拟真实的用户代理
+            Object.defineProperty(navigator, 'userAgent', {{
+                get: () => '{browser_features['user_agent']}'
+            }});
+            
+            // 隐藏自动化相关的全局变量
+            delete window.webdriver;
+            delete window.__webdriver_script_fn;
+            delete window.__webdriver_evaluate;
+            delete window.__webdriver_unwrapped;
+            delete window.__fxdriver_evaluate;
+            delete window.__driver_evaluate;
+            delete window.__webdriver_script_func;
+            delete window._selenium;
+            delete window._phantom;
+            delete window.callPhantom;
+            delete window._phantom;
+            delete window.phantom;
+            delete window.Buffer;
+            delete window.emit;
+            delete window.spawn;
+            
+            // Canvas指纹随机化
+            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            HTMLCanvasElement.prototype.toDataURL = function() {{
+                const context = this.getContext('2d');
+                if (context) {{
+                    const imageData = context.getImageData(0, 0, this.width, this.height);
+                    const data = imageData.data;
+                    for (let i = 0; i < data.length; i += 4) {{
+                        if (Math.random() < 0.001) {{
+                            data[i] = Math.floor(Math.random() * 256);
+                        }}
+                    }}
+                    context.putImageData(imageData, 0, 0);
+                }}
+                return originalToDataURL.apply(this, arguments);
+            }};
+            
+            // 音频指纹随机化
+            const originalGetChannelData = AudioBuffer.prototype.getChannelData;
+            AudioBuffer.prototype.getChannelData = function(channel) {{
+                const data = originalGetChannelData.call(this, channel);
+                for (let i = 0; i < data.length; i += 1000) {{
+                    if (Math.random() < 0.01) {{
+                        data[i] += Math.random() * 0.0001;
+                    }}
+                }}
+                return data;
+            }};
+            
+            // WebGL指纹随机化
+            const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {{
+                if (parameter === 37445) {{ // UNMASKED_VENDOR_WEBGL
+                    return 'Intel Inc.';
+                }}
+                if (parameter === 37446) {{ // UNMASKED_RENDERER_WEBGL
+                    return 'Intel Iris OpenGL Engine';
+                }}
+                return originalGetParameter.call(this, parameter);
+            }};
+            
+            // 模拟真实的鼠标事件
+            const originalAddEventListener = EventTarget.prototype.addEventListener;
+            EventTarget.prototype.addEventListener = function(type, listener, options) {{
+                if (type === 'mousedown' || type === 'mouseup' || type === 'mousemove') {{
+                    const originalListener = listener;
+                    listener = function(event) {{
+                        setTimeout(() => originalListener.call(this, event), Math.random() * 10);
+                    }};
+                }}
+                return originalAddEventListener.call(this, type, listener, options);
+            }};
+            
+            // 随机化字体检测
+            Object.defineProperty(document, 'fonts', {{
+                get: () => ({{
+                    ready: Promise.resolve(),
+                    check: () => true,
+                    load: () => Promise.resolve([])
+                }})
+            }});
+
+            // 增强鼠标移动轨迹记录
+            let mouseMovements = [];
+            let lastMouseTime = Date.now();
+            document.addEventListener('mousemove', function(e) {{
+                const now = Date.now();
+                const timeDiff = now - lastMouseTime;
+                mouseMovements.push({{
+                    x: e.clientX,
+                    y: e.clientY,
+                    time: now,
+                    timeDiff: timeDiff
+                }});
+                lastMouseTime = now;
+                // 保持最近100个移动记录
+                if (mouseMovements.length > 100) {{
+                    mouseMovements.shift();
+                }}
+            }}, true);
+
+            // 模拟真实的电池API
+            if (navigator.getBattery) {{
+                const originalGetBattery = navigator.getBattery;
+                navigator.getBattery = async function() {{
+                    const battery = await originalGetBattery.call(navigator);
+                        Object.defineProperty(battery, 'charging', {{ get: () => {str(browser_features['battery_charging']).lower()} }});
+                        Object.defineProperty(battery, 'level', {{ get: () => {browser_features['battery_level']:.2f} }});
+                    return battery;
+                }};
+            }}
+            
+            // 伪装鼠标移动加速度（反检测关键）
+            let velocityProfile = [];
+            window.addEventListener('mousemove', function(e) {{
+                const now = performance.now();
+                velocityProfile.push({{ x: e.clientX, y: e.clientY, t: now }});
+                if (velocityProfile.length > 50) velocityProfile.shift();
+            }}, true);
+            
+            // 伪装Permission API
+            const originalQuery = Permissions.prototype.query;
+            Permissions.prototype.query = function(parameters) {{
+                if (parameters.name === 'notifications') {{
+                    return Promise.resolve({{ state: '{browser_features['notification_permission']}' }});
+                }}
+                return originalQuery.apply(this, arguments);
+            }};
+            
+            // 伪装Performance API
+            const originalNow = Performance.prototype.now;
+            Performance.prototype.now = function() {{
+                return originalNow.call(this) + Math.random() * 0.1;
+            }};
+            
+            // 伪装Date API（添加微小随机偏移）
+            const OriginalDate = Date;
+            Date = function(...args) {{
+                if (args.length === 0) {{
+                    const date = new OriginalDate();
+                    const offset = Math.floor(Math.random() * 3) - 1; // -1到1毫秒
+                    return new OriginalDate(date.getTime() + offset);
+                }}
+                return new OriginalDate(...args);
+            }};
+            Date.prototype = OriginalDate.prototype;
+            Date.now = function() {{
+                return OriginalDate.now() + Math.floor(Math.random() * 3) - 1;
+            }};
+            
+            // 伪装RTCPeerConnection（WebRTC指纹）
+            if (window.RTCPeerConnection) {{
+                const originalRTC = window.RTCPeerConnection;
+                window.RTCPeerConnection = function(...args) {{
+                    const pc = new originalRTC(...args);
+                    const originalCreateOffer = pc.createOffer;
+                    pc.createOffer = function(...args) {{
+                        return originalCreateOffer.apply(this, args).then(offer => {{
+                            // 修改SDP指纹
+                            offer.sdp = offer.sdp.replace(/a=fingerprint:.*\\r\\n/g, 
+                                `a=fingerprint:sha-256 ${{Array.from({{length:64}}, ()=>Math.floor(Math.random()*16).toString(16)).join('')}}\\r\\n`);
+                            return offer;
+                        }});
+                    }};
+                    return pc;
+                }};
+            }}
+            
+            // 伪装 Notification 权限（防止被检测为自动化）
+            Object.defineProperty(Notification, 'permission', {{
+                get: function() {{
+                    return '{browser_features['notification_permission']}';
+                }}
+            }});
+
+            // 伪装 DoNotTrack
+            Object.defineProperty(navigator, 'doNotTrack', {{
+                get: function() {{
+                    return '{browser_features['do_not_track']}';
+                }}
+            }});
+            
+            // 伪装 Geolocation（添加微小延迟和误差）
+            if (navigator.geolocation) {{
+                const originalGetCurrentPosition = navigator.geolocation.getCurrentPosition;
+                navigator.geolocation.getCurrentPosition = function(success, error, options) {{
+                    const wrappedSuccess = function(position) {{
+                        // 添加微小的位置偏移（模拟真实GPS误差）
+                        const offset = Math.random() * 0.001;
+                        position.coords.latitude += offset;
+                        position.coords.longitude += offset;
+                        success(position);
+                    }};
+                    // 添加随机延迟
+                    setTimeout(() => {{
+                        originalGetCurrentPosition.call(this, wrappedSuccess, error, options);
+                    }}, Math.random() * 100);
+                }};
+            }}
+            
+            // 伪装 Clipboard API（防止检测剪贴板访问模式）
+            if (navigator.clipboard) {{
+                const originalReadText = navigator.clipboard.readText;
+                navigator.clipboard.readText = async function() {{
+                    // 添加微小延迟
+                    await new Promise(resolve => setTimeout(resolve, Math.random() * 50));
+                    return originalReadText.call(this);
+                }};
+            }}
+
+            // 🔑 伪装chrome对象（统一定义，防止检测headless）
+            window.chrome = {{
+                runtime: {{
+                    id: undefined,
+                    sendMessage: function() {{}},
+                    connect: function() {{}}
+                }},
+                loadTimes: function() {{}},
+                csi: function() {{}},
+                app: {{}}
+            }};
+
+            // 🔑 覆盖Function.prototype.toString以隐藏代理
+            const oldToString = Function.prototype.toString;
+            Function.prototype.toString = function() {{
+                if (this === navigator.permissions.query) {{
+                    return 'function query() {{ [native code] }}';
+                }}
+                return oldToString.call(this);
+            }};
+        """
     
     def _bezier_curve(self, p0, p1, p2, p3, t):
         """三次贝塞尔曲线 - 生成更自然的轨迹"""
@@ -7115,20 +7166,8 @@ class XianyuSliderStealth:
                 time.sleep(post_up_pause * _tempo(7))
 
                 # 等待服务端验证判定（关键：阿里滑块验证是异步的，需要给服务端足够时间返回结果）
-                if "server_judge_wait" in learned_behavior:
-                    wait_range = learned_behavior["server_judge_wait"]
-                    server_wait_range = (
-                        max(0.8, float(wait_range[0])),
-                        max(float(wait_range[0]) + 0.1, float(wait_range[1])),
-                    )
-                    server_wait_tempo = max(1.0, min(1.2, _tempo(8)))
-                elif getattr(self, "risk_trigger_scene", None) == "token_refresh":
-                    server_wait_range = (2.2, 4.2) if stable_headless_profile else (2.0, 3.6)
-                    server_wait_tempo = max(1.0, min(1.2, _tempo(8)))
-                else:
-                    server_wait_range = (1.25, 2.10) if stable_headless_profile else (1.0, 2.0)
-                    server_wait_tempo = _tempo(8)
-                server_judge_wait = random.uniform(*server_wait_range) * server_wait_tempo
+                server_wait_range = (1.25, 2.10) if stable_headless_profile else (1.0, 2.0)
+                server_judge_wait = random.uniform(*server_wait_range) * _tempo(8)
                 slide_behavior['server_judge_wait'] = server_judge_wait
                 logger.debug(f"【{self.pure_user_id}】等待服务端判定: {server_judge_wait:.2f}秒")
                 time.sleep(server_judge_wait)
@@ -7210,20 +7249,6 @@ class XianyuSliderStealth:
             return False
 
         try:
-            special_block = self._detect_special_captcha_block(target_page)
-            special_block = self._wait_for_punish_slider_dom_ready_if_needed(
-                target_page,
-                special_block,
-                "初始页面拦截判定",
-            )
-            special_block = self._recover_punish_slider_shell_if_possible(
-                target_page,
-                special_block,
-                "初始页面拦截判定",
-            )
-            if special_block:
-                return True
-
             page_text = ""
             try:
                 page_text = target_page.inner_text('body', timeout=1500) or ""
@@ -7271,321 +7296,7 @@ class XianyuSliderStealth:
             pass
 
         return False
-
-    def _detect_special_captcha_block(self, target=None) -> Optional[Dict[str, Any]]:
-        """检测验证码处罚页/反馈拦截页，避免把不可解风控页继续当普通滑块拖。"""
-        target_page = target or self.page
-        if not target_page:
-            return None
-
-        try:
-            detached_runtime = False
-
-            def _mark_detached_runtime(error: Exception) -> bool:
-                nonlocal detached_runtime
-                error_text = str(error).lower()
-                if 'detached' in error_text or 'disconnected' in error_text:
-                    detached_runtime = True
-                    return True
-                return False
-
-            try:
-                current_url = str(getattr(target_page, 'url', '') or '')
-            except Exception:
-                current_url = ''
-            current_url_lower = current_url.lower()
-
-            current_title = ''
-            try:
-                raw_title = target_page.title() if callable(getattr(target_page, 'title', None)) else getattr(target_page, 'title', '')
-                current_title = str(raw_title or '')
-            except Exception as title_error:
-                _mark_detached_runtime(title_error)
-                current_title = ''
-            current_title_lower = current_title.lower()
-
-            page_text = ''
-            try:
-                page_text = target_page.inner_text('body', timeout=1500) or ''
-            except Exception as text_error:
-                _mark_detached_runtime(text_error)
-                try:
-                    page_text = target_page.content() or ''
-                except Exception as content_error:
-                    _mark_detached_runtime(content_error)
-                    page_text = ''
-            page_text_lower = str(page_text or '').lower()
-
-            has_slider_button = False
-            for selector in ("#nc_1_n1z", ".btn_slide", ".sm-btn", ".nc_scale"):
-                try:
-                    element = target_page.query_selector(selector)
-                    if element and element.is_visible():
-                        has_slider_button = True
-                        break
-                except Exception:
-                    continue
-
-            # `#nocaptcha` / `.sm-btn-wrapper` 常只是处罚页的外壳容器；
-            # 只有真正的轨道/按钮出现时，才算“仍可操作的滑块”。
-            has_slider_track = False
-            for selector in ("#nc_1_n1t", ".nc_scale"):
-                try:
-                    element = target_page.query_selector(selector)
-                    if element and element.is_visible():
-                        has_slider_track = True
-                        break
-                except Exception:
-                    continue
-
-            has_operable_slider = has_slider_button or has_slider_track
-            if detached_runtime and not page_text and not has_operable_slider:
-                logger.debug(
-                    f"【{self.pure_user_id}】检测验证码处罚页时目标已分离，忽略旧 frame 残留状态: "
-                    f"{current_url or 'unknown'}"
-                )
-                return None
-
-            punish_tokens = (
-                'punish?x5secdata',
-                'action=captcha',
-                'purecaptcha=true',
-                'x5step=2',
-            )
-            punish_hit_count = sum(1 for token in punish_tokens if token in current_url_lower)
-            punish_title_hit = ('验证码拦截' in current_title) or ('captcha intercept' in current_title_lower)
-            punish_text_hit = ('验证码拦截' in page_text) or ('验证失败，点击框体重试' in page_text)
-            if punish_hit_count >= 2 or punish_title_hit or punish_text_hit:
-                if has_operable_slider:
-                    logger.debug(
-                        f"【{self.pure_user_id}】当前命中 pureCaptcha/处罚页特征，但页面仍存在可操作滑块，继续按普通滑块处理"
-                    )
-                else:
-                    return {
-                        'kind': 'punish_captcha',
-                        'url': current_url,
-                        'title': current_title,
-                        'message': '当前命中阿里验证码拦截处罚页（pureCaptcha），且页面不存在可操作滑块',
-                    }
-
-            hard_block_keywords = [
-                "抱歉，页面访问出现了问题",
-                "页面访问出现了问题",
-                "点我反馈",
-            ]
-            keyword_hit = any(keyword in page_text for keyword in hard_block_keywords)
-            has_qrcode = False
-            has_feedback_link = False
-            for selector in (
-                ".bx-pu-qrcode-wrap",
-                ".captcha-qrcode",
-                "#bx-feedback-btn",
-                "a[href*='page/feedback']",
-            ):
-                try:
-                    element = target_page.query_selector(selector)
-                    if element:
-                        if selector in (".bx-pu-qrcode-wrap", ".captcha-qrcode"):
-                            has_qrcode = True
-                        else:
-                            has_feedback_link = True
-                except Exception:
-                    continue
-
-            if keyword_hit and (has_qrcode or has_feedback_link) and not has_operable_slider:
-                return {
-                    'kind': 'feedback_block',
-                    'url': current_url,
-                    'title': current_title,
-                    'message': '当前命中反馈二维码/处罚页，不存在可操作滑块',
-                }
-        except Exception:
-            return None
-
-        return None
-
-    def _has_recoverable_punish_slider_shell(self, target) -> bool:
-        """识别 pureCaptcha 壳页里仍可被点活的滑块容器。"""
-        if not target:
-            return False
-
-        shell_selectors = (
-            ".errloading",
-            "[data-nc-status='error']",
-            "#nocaptcha",
-            ".nc-container",
-            ".nc_wrapper",
-            ".nc_scale",
-            ".sm-btn-wrapper",
-            "#baxia-dialog-content",
-        )
-        for selector in shell_selectors:
-            try:
-                element = target.query_selector(selector)
-                if not element:
-                    continue
-                try:
-                    if element.is_visible():
-                        return True
-                except Exception:
-                    return True
-            except Exception:
-                continue
-        return False
-
-    def _has_ready_punish_slider_dom(self, target) -> bool:
-        """处罚页经常先出壳子、后出真滑块，这里只看关键DOM是否已出现。"""
-        if not target:
-            return False
-
-        button_selectors = (
-            "#nc_1_n1z",
-            ".btn_slide",
-            ".sm-btn",
-        )
-        track_selectors = (
-            "#nc_1_n1t",
-            ".nc_scale",
-        )
-        text_selectors = (
-            "#nc_1__scale_text",
-            ".captcha-tips",
-        )
-
-        has_button = False
-        has_track = False
-        has_text = False
-
-        for selector in button_selectors:
-            try:
-                if target.query_selector(selector):
-                    has_button = True
-                    break
-            except Exception:
-                continue
-
-        for selector in track_selectors:
-            try:
-                if target.query_selector(selector):
-                    has_track = True
-                    break
-            except Exception:
-                continue
-
-        for selector in text_selectors:
-            try:
-                element = target.query_selector(selector)
-                if element and str(element.text_content() or "").strip():
-                    has_text = True
-                    break
-            except Exception:
-                continue
-
-        return has_button and (has_track or has_text)
-
-    def _wait_for_punish_slider_dom_ready_if_needed(
-        self,
-        target,
-        current_block: Optional[Dict[str, Any]],
-        context_label: str,
-        max_wait_seconds: float = 1.2,
-        poll_interval: float = 0.25,
-    ) -> Optional[Dict[str, Any]]:
-        """pureCaptcha 页面真实滑块会晚一点挂出来，先给一小段收敛窗口，别太早判死刑。"""
-        if not current_block or current_block.get("kind") != "punish_captcha":
-            return current_block
-
-        if self._has_ready_punish_slider_dom(target):
-            logger.info(f"【{self.pure_user_id}】{context_label} 检测到处罚页真实滑块DOM已就绪，继续按正常滑块处理")
-            return None
-
-        deadline = time.time() + max(0.0, max_wait_seconds)
-        refreshed_block = current_block
-        while time.time() < deadline:
-            time.sleep(max(0.05, poll_interval))
-            if self._has_ready_punish_slider_dom(target):
-                logger.info(f"【{self.pure_user_id}】{context_label} 处罚页真实滑块DOM已延迟出现，继续按正常滑块处理")
-                return None
-            refreshed_block = self._detect_special_captcha_block(target)
-            if not refreshed_block:
-                logger.info(f"【{self.pure_user_id}】{context_label} 处罚页状态已恢复，继续按正常滑块处理")
-                return None
-
-        return refreshed_block
-
-    def _click_first_activation_target(self, target, selectors: List[Tuple[str, str]], context_label: str) -> bool:
-        """在指定 page/frame 中点击第一个可用激活区域。"""
-        if not target:
-            return False
-
-        for selector, desc in selectors:
-            try:
-                element = target.query_selector(selector)
-                if not element:
-                    continue
-                try:
-                    if not element.is_visible():
-                        continue
-                except Exception:
-                    pass
-
-                try:
-                    box = element.bounding_box()
-                except Exception:
-                    box = None
-
-                try:
-                    if box and getattr(self, "page", None):
-                        click_x = box["x"] + box["width"] / 2
-                        click_y = box["y"] + box["height"] / 2
-                        self.page.mouse.click(click_x, click_y)
-                    else:
-                        element.click(timeout=1000)
-                    logger.info(f"【{self.pure_user_id}】已点击{context_label}激活区域[{desc}]: {selector}")
-                    return True
-                except Exception as click_err:
-                    logger.debug(f"【{self.pure_user_id}】点击{context_label}激活区域[{desc}]失败: {click_err}")
-                    continue
-            except Exception as find_err:
-                logger.debug(f"【{self.pure_user_id}】查找{context_label}激活区域[{desc}]失败: {find_err}")
-                continue
-        return False
-
-    def _recover_punish_slider_shell_if_possible(
-        self,
-        target,
-        current_block: Optional[Dict[str, Any]],
-        context_label: str,
-    ) -> Optional[Dict[str, Any]]:
-        """对可恢复的 pureCaptcha 壳页先尝试点活，再重新探测。"""
-        if not current_block or current_block.get("kind") != "punish_captcha":
-            return current_block
-        if not self._has_recoverable_punish_slider_shell(target):
-            return current_block
-
-        activation_selectors = [
-            (".errloading", "错误提示区"),
-            ("[data-nc-status='error']", "NC错误状态"),
-            (".nc-container", "滑块容器"),
-            ("#nocaptcha", "NoCaptcha容器"),
-            (".nc_wrapper", "滑块包装器"),
-            (".nc_scale", "滑块轨道"),
-            (".sm-btn-wrapper", "滑块按钮包装器"),
-            ("#baxia-dialog-content", "验证码对话框"),
-        ]
-        if not self._click_first_activation_target(target, activation_selectors, context_label):
-            return current_block
-
-        time.sleep(0.8)
-        refreshed_block = self._detect_special_captcha_block(target)
-        if refreshed_block:
-            logger.info(
-                f"【{self.pure_user_id}】{context_label} pureCaptcha 壳页点活后仍是硬拦截[{refreshed_block.get('kind')}]"
-            )
-        else:
-            logger.info(f"【{self.pure_user_id}】{context_label} pureCaptcha 壳页已点活，继续按正常滑块处理")
-        return refreshed_block
-
+    
     def find_slider_elements(self, fast_mode=False):
         """查找滑块元素（支持在主页面和所有frame中查找）
         
@@ -7597,30 +7308,8 @@ class XianyuSliderStealth:
             if not fast_mode:
                 time.sleep(0.1)
 
-            current_block = self._detect_special_captcha_block(self.page)
-            current_block = self._wait_for_punish_slider_dom_ready_if_needed(
-                self.page,
-                current_block,
-                "主页面滑块探测",
-            )
-            current_block = self._recover_punish_slider_shell_if_possible(
-                self.page,
-                current_block,
-                "主页面滑块探测",
-            )
-            if current_block:
-                logger.error(
-                    f"【{self.pure_user_id}】当前页面命中高风险验证码页[{current_block['kind']}]: "
-                    f"{current_block['message']}"
-                )
-                self.last_verification_feedback = {
-                    "status": "hard_block",
-                    "source": current_block["kind"],
-                    "message": current_block["message"],
-                    "url": current_block.get("url") or "",
-                    "title": current_block.get("title") or "",
-                }
-                self._save_debug_snapshot("hard_block_page", self.page)
+            if self._is_hard_block_page(self.page):
+                logger.error(f"【{self.pure_user_id}】当前页面是处罚页/反馈二维码页，不存在可操作滑块，停止元素查找")
                 return None, None, None
             
             # ===== 【优化】优先在 frames 中快速查找最常见的滑块组合 =====
@@ -10134,7 +9823,7 @@ class XianyuSliderStealth:
                 logger.error(f"【{self.pure_user_id}】日期验证失败，无法执行登录")
                 return self._fail_login("日期验证失败，无法执行登录")
 
-            if self._should_prefer_project_browser_for_playwright():
+            if not self.browser_channel and not self.executable_path:
                 self._ensure_project_playwright_browser()
             
             # 验证必需参数
@@ -10210,13 +9899,12 @@ class XianyuSliderStealth:
             ]
 
             # 启动浏览器
-            if self._should_prefer_project_browser_for_playwright():
+            if not self.browser_channel and not self.executable_path:
                 self._ensure_project_playwright_browser()
 
             playwright_factory = self._get_sync_playwright_factory()
             playwright = playwright_factory().start()
             browser = None
-            used_profile_lock_fallback = False
             launch_options: Dict[str, Any] = {
                 'headless': not show_browser,
                 'ignore_default_args': ['--enable-automation'],
@@ -10231,39 +9919,74 @@ class XianyuSliderStealth:
             if self.executable_path:
                 launch_options['executable_path'] = self.executable_path
             if force_clean_context:
-                browser, context = self._launch_clean_cookie_seeded_context(
-                    playwright,
-                    launch_options,
-                    browser_features,
+                browser = playwright.chromium.launch(**launch_options)
+                context = browser.new_context(
+                    viewport={'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
+                    user_agent=browser_features['user_agent'],
+                    locale=browser_features['locale'],
+                    accept_downloads=True,
+                    ignore_https_errors=True,
+                    extra_http_headers={
+                        'Accept-Language': browser_features['accept_lang']
+                    }
                 )
-            else:
+                # 注入已有 Cookie（让浏览器不是全新空白状态，降低风控检测风险）
                 try:
-                    context = playwright.chromium.launch_persistent_context(
-                        user_data_dir,
-                        **launch_options,
-                        viewport={'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
-                        user_agent=browser_features['user_agent'],
-                        locale=browser_features['locale'],
-                        accept_downloads=True,
-                        ignore_https_errors=True,
-                        extra_http_headers={
-                            'Accept-Language': browser_features['accept_lang']
-                        }
-                    )
-                except Exception as persistent_launch_error:
-                    if not self._is_profile_in_use_launch_error(persistent_launch_error):
-                        raise
-                    used_profile_lock_fallback = True
-                    logger.warning(
-                        f"【{self.pure_user_id}】持久化浏览器目录被其他 Chromium 进程占用，"
-                        f"自动切换到干净上下文兜底登录: {persistent_launch_error}"
-                    )
-                    browser, context = self._launch_clean_cookie_seeded_context(
-                        playwright,
-                        launch_options,
-                        browser_features,
-                    )
-            effective_clean_context = force_clean_context or used_profile_lock_fallback
+                    _cookies_to_inject = self._build_initial_cookie_payload()
+                    _cookie_str = ''
+                    if not _cookies_to_inject:
+                        from db_manager import db_manager as _db
+                        _cookie_info = _db.get_cookie_details(self.pure_user_id)
+                        if _cookie_info and _cookie_info.get('value'):
+                            _cookie_str = _cookie_info['value']
+                    if _cookie_str:
+                        _cookies_to_inject = []
+                        for pair in _cookie_str.split(';'):
+                            pair = pair.strip()
+                            if '=' in pair:
+                                name, value = pair.split('=', 1)
+                                name = name.strip()
+                                value = value.strip()
+                                if name:
+                                    _cookies_to_inject.append({
+                                        'name': name,
+                                        'value': value,
+                                        'domain': '.goofish.com',
+                                        'path': '/',
+                                    })
+                                    # 同时注入 taobao 域（部分 Cookie 需要跨域）
+                                    if name in ('_m_h5_tk', '_m_h5_tk_enc', 'cookie2', 'sgcookie', 'unb', 't', 'cna'):
+                                        _cookies_to_inject.append({
+                                            'name': name,
+                                            'value': value,
+                                            'domain': '.taobao.com',
+                                            'path': '/',
+                                        })
+                        if _cookies_to_inject:
+                            context.add_cookies(_cookies_to_inject)
+                            logger.info(f"【{self.pure_user_id}】已注入 {len(_cookies_to_inject)} 个历史 Cookie 到干净上下文")
+                        else:
+                            logger.warning(f"【{self.pure_user_id}】历史 Cookie 为空，使用全新上下文")
+                    elif _cookies_to_inject:
+                        context.add_cookies(_cookies_to_inject)
+                        logger.info(f"【{self.pure_user_id}】已注入 {len(_cookies_to_inject)} 个传入 Cookie 到干净上下文")
+                    else:
+                        logger.info(f"【{self.pure_user_id}】未找到历史 Cookie，使用全新上下文")
+                except Exception as inject_e:
+                    logger.warning(f"【{self.pure_user_id}】注入历史 Cookie 失败（不影响登录）: {inject_e}")
+            else:
+                context = playwright.chromium.launch_persistent_context(
+                    user_data_dir,
+                    **launch_options,
+                    viewport={'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
+                    user_agent=browser_features['user_agent'],
+                    locale=browser_features['locale'],
+                    accept_downloads=True,
+                    ignore_https_errors=True,
+                    extra_http_headers={
+                        'Accept-Language': browser_features['accept_lang']
+                    }
+                )
             logger.info(f"【{self.pure_user_id}】已设置浏览器语言为中文（zh-CN）")
 
             if not browser:
@@ -10313,12 +10036,8 @@ class XianyuSliderStealth:
             else:
                 password_login_stealth_mode = None
                 if not show_browser and not self.stealth_mode_override:
-                    # 账密登录页对 full 改写更敏感，先保证登录表单能稳定出现；
-                    # 真正过滑块主要靠稳定画像 + 学习轨迹，不靠这里硬怼 full。
                     password_login_stealth_mode = "lite"
-                    logger.info(
-                        f"【{self.pure_user_id}】密码登录链路默认使用 {password_login_stealth_mode} 反检测脚本"
-                    )
+                    logger.info(f"【{self.pure_user_id}】密码登录链路默认使用 lite 反检测脚本，避免无头登录页白屏")
                 self._install_stealth_init_script(page, browser_features, mode_override=password_login_stealth_mode)
 
             logger.info(f"【{self.pure_user_id}】浏览器已成功启动（{browser_mode}模式，画像: {self.profile_id}）")
@@ -11630,18 +11349,6 @@ class XianyuSliderStealth:
                         f"{'无头' if self.headless else '有头'}环境指纹已被风控拦截，当前页面不存在可操作滑块"
                     )
                     self._save_debug_snapshot("hard_block_page", self.page)
-                    monitor_page = self._select_monitor_page(self.context, self.page) or self.page
-                    has_qr, qr_frame = self._detect_qr_code_verification(monitor_page)
-                    if has_qr:
-                        verification_result = self._process_verification_requirement(
-                            self.context,
-                            monitor_page,
-                            qr_frame,
-                            notification_callback=notification_callback,
-                            notification_scene=notification_scene,
-                        )
-                        if verification_result:
-                            return True, verification_result
                     return False, None
 
                 self._simulate_human_page_behavior()
@@ -11687,24 +11394,6 @@ class XianyuSliderStealth:
                         logger.warning(f"【{self.pure_user_id}】获取cookie时出错: {str(e)}")
                 else:
                     logger.warning(f"【{self.pure_user_id}】滑块验证失败")
-                    abort_flow, abort_reason = self._should_abort_token_refresh_slider_flow_after_failure()
-                    if abort_flow:
-                        logger.warning(f"【{self.pure_user_id}】{abort_reason}，停止后续验证页接管，交由外层恢复链路处理")
-                        self._save_debug_snapshot("run_failed", getattr(self, "_detected_slider_frame", None))
-                        return False, None
-                    monitor_page = self._select_monitor_page(self.context, self.page) or self.page
-                    has_qr, qr_frame = self._detect_qr_code_verification(monitor_page)
-                    if has_qr:
-                        logger.warning(f"【{self.pure_user_id}】滑块流程结束后检测到身份验证页，转入验证等待流程")
-                        verification_result = self._process_verification_requirement(
-                            self.context,
-                            monitor_page,
-                            qr_frame,
-                            notification_callback=notification_callback,
-                            notification_scene=notification_scene,
-                        )
-                        if verification_result:
-                            return True, verification_result
                     self._save_debug_snapshot("run_failed", getattr(self, "_detected_slider_frame", None))
                 
                 return success, cookies

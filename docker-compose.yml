@@ -3,6 +3,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: docker.xuanyuan.me/library/python:3.11-slim-bookworm
+        HTTP_PROXY: ${HTTP_PROXY}
+        HTTPS_PROXY: ${HTTPS_PROXY}
+        NO_PROXY: ${NO_PROXY}
+        http_proxy: ${HTTP_PROXY}
+        https_proxy: ${HTTPS_PROXY}
+        no_proxy: ${NO_PROXY}
     image: ghcr.io/gudong2003/xianyu-auto-reply-fix:latest
     container_name: xianyu-auto-reply-fix
     restart: unless-stopped
@@ -12,7 +20,7 @@ services:
     # 即使挂载了 Windows 文件，bash 也能正确处理
     entrypoint: ["/bin/bash", "-c", "dos2unix /app/entrypoint.sh 2>/dev/null || true; bash /app/entrypoint.sh"]
     ports:
-      - "9000:8090"
+      - "9020:8090"
       - "5900:5900"    # VNC 端口（可选，用于远程查看浏览器）
     volumes:
       # 数据持久化

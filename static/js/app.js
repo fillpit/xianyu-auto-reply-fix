@@ -5468,28 +5468,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 启动验证会话监控
     startCaptchaSessionMonitor();
     // 添加Cookie表单提交
-    document.getElementById('addForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const id = document.getElementById('cookieId').value.trim();
-    const value = document.getElementById('cookieValue').value.trim();
-
-    if (!id || !value) return;
-
-    try {
-        await fetchJSON(apiBase + '/cookies', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, value })
-        });
-
-        document.getElementById('cookieId').value = '';
-        document.getElementById('cookieValue').value = '';
-        showToast(`账号 "${id}" 添加成功`);
-        loadCookies();
-    } catch (err) {
-        // 错误已在fetchJSON中处理
-    }
-    });
+    document.getElementById('addForm').addEventListener('submit', handleManualCookieImport);
 
     // 添加账号密码登录表单提交
     const passwordLoginForm = document.getElementById('passwordLoginFormElement');
@@ -12106,6 +12085,206 @@ function toggleManualInput() {
         document.getElementById('addForm').reset();
     } else {
         manualForm.style.display = 'none';
+        resetManualCookieImportForm();
+    }
+}
+
+let manualCookieImportCheckInterval = null;
+let manualCookieImportSessionId = null;
+let manualCookieImportPollingState = {
+    sessionId: null,
+    inFlight: false,
+    completed: false
+};
+
+async function handleManualCookieImport(event) {
+    event.preventDefault();
+
+    const accountId = document.getElementById('cookieId').value.trim();
+    const cookieValue = document.getElementById('cookieValue').value.trim();
+    const showBrowserCheckbox = document.getElementById('manualCookieShowBrowser');
+    const showBrowser = showBrowserCheckbox ? showBrowserCheckbox.checked : false;
+
+    if (!accountId || !cookieValue) {
+        showToast('请填写完整的账号ID和Cookie', 'warning');
+        return;
+    }
+
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+    const originalText = submitBtn.innerHTML;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>验证中...';
+
+    try {
+        const response = await fetch(`${apiBase}/manual-cookie-import`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                account_id: accountId,
+                cookie: cookieValue,
+                show_browser: showBrowser
+            })
+        });
+
+        const data = await response.json();
+        if (response.ok && data.success && data.session_id) {
+            manualCookieImportSessionId = data.session_id;
+            startManualCookieImportCheck(originalText);
+        } else {
+            showToast(data.message || 'Cookie 导入验证失败', 'danger');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalText;
+        }
+    } catch (error) {
+        console.error('手动导入 Cookie 失败:', error);
+        showToast('网络错误，请重试', 'danger');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
+    }
+}
+
+function clearManualCookieImportCheck() {
+    if (manualCookieImportCheckInterval) {
+        clearInterval(manualCookieImportCheckInterval);
+        manualCookieImportCheckInterval = null;
+    }
+}
+
+function resetManualCookieImportForm() {
+    manualCookieImportSessionId = null;
+    clearManualCookieImportCheck();
+    manualCookieImportPollingState = {
+        sessionId: null,
+        inFlight: false,
+        completed: false
+    };
+
+    const submitBtn = document.querySelector('#addForm button[type="submit"]');
+    if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="bi bi-plus-lg me-1"></i>导入并验证账号';
+    }
+}
+
+function handleManualCookieImportSuccess(data) {
+    closePasswordLoginQRModal();
+    showToast(`账号 ${data.account_id} 导入并验证成功`, 'success');
+
+    const form = document.getElementById('addForm');
+    if (form) {
+        form.reset();
+    }
+    const manualForm = document.getElementById('manualInputForm');
+    if (manualForm) {
+        manualForm.style.display = 'none';
+    }
+    loadCookies();
+    resetManualCookieImportForm();
+}
+
+function handleManualCookieImportFailure(data) {
+    closePasswordLoginQRModal();
+    showToast(data.message || data.error || 'Cookie 导入验证失败', 'danger');
+    resetManualCookieImportForm();
+}
+
+function startManualCookieImportCheck(originalText) {
+    clearManualCookieImportCheck();
+
+    const submitBtn = document.querySelector('#addForm button[type="submit"]');
+    if (submitBtn) {
+        submitBtn.dataset.originalText = originalText;
+    }
+
+    manualCookieImportPollingState = {
+        sessionId: manualCookieImportSessionId,
+        inFlight: false,
+        completed: false
+    };
+
+    manualCookieImportCheckInterval = setInterval(checkManualCookieImportStatus, 2000);
+    checkManualCookieImportStatus();
+}
+
+async function checkManualCookieImportStatus() {
+    if (!manualCookieImportSessionId || manualCookieImportPollingState.completed || manualCookieImportPollingState.inFlight) {
+        return;
+    }
+
+    const sessionId = manualCookieImportSessionId;
+    manualCookieImportPollingState.inFlight = true;
+
+    try {
+        const response = await fetch(`${apiBase}/manual-cookie-import/check/${sessionId}`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            if (manualCookieImportPollingState.sessionId !== sessionId || manualCookieImportPollingState.completed) {
+                return;
+            }
+
+            switch (data.status) {
+                case 'processing':
+                    break;
+                case 'verification_required':
+                    showPasswordLoginQRCode(
+                        data.screenshot_path || data.verification_url,
+                        data.screenshot_path,
+                        data.verification_type
+                    );
+                    break;
+                case 'success':
+                    manualCookieImportPollingState.completed = true;
+                    clearManualCookieImportCheck();
+                    handleManualCookieImportSuccess(data);
+                    break;
+                case 'failed':
+                    manualCookieImportPollingState.completed = true;
+                    clearManualCookieImportCheck();
+                    handleManualCookieImportFailure(data);
+                    break;
+                case 'not_found':
+                case 'forbidden':
+                case 'error':
+                    manualCookieImportPollingState.completed = true;
+                    clearManualCookieImportCheck();
+                    closePasswordLoginQRModal();
+                    showToast(data.message || 'Cookie 导入验证检查失败', 'danger');
+                    resetManualCookieImportForm();
+                    break;
+            }
+        } else {
+            let errorMessage = 'Cookie 导入验证检查失败';
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.message || errorData.detail || errorMessage;
+            } catch (e) {
+                // ignore parse error
+            }
+            manualCookieImportPollingState.completed = true;
+            clearManualCookieImportCheck();
+            closePasswordLoginQRModal();
+            showToast(errorMessage, 'danger');
+            resetManualCookieImportForm();
+        }
+    } catch (error) {
+        console.error('检查手动导入 Cookie 状态失败:', error);
+        manualCookieImportPollingState.completed = true;
+        clearManualCookieImportCheck();
+        closePasswordLoginQRModal();
+        showToast('网络错误，请重试', 'danger');
+        resetManualCookieImportForm();
+    } finally {
+        if (manualCookieImportPollingState.sessionId === sessionId) {
+            manualCookieImportPollingState.inFlight = false;
+        }
     }
 }
 
@@ -12118,6 +12297,7 @@ function togglePasswordLogin() {
         // 隐藏手动输入表单
         if (manualForm) {
             manualForm.style.display = 'none';
+            resetManualCookieImportForm();
         }
         // 隐藏刷新Cookie表单
         if (refreshForm) {
@@ -12141,6 +12321,7 @@ function toggleRefreshCookieForm() {
         // 隐藏其他表单
         if (manualForm) {
             manualForm.style.display = 'none';
+            resetManualCookieImportForm();
         }
         if (passwordForm) {
             passwordForm.style.display = 'none';
