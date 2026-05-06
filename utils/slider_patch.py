@@ -2107,6 +2107,27 @@ def patch_login_with_password_headful():
         return False
 
 
+def patch_check_date_validity_force_allow():
+    """追加一个干净补丁，确保日期校验永久放行。"""
+    try:
+        try:
+            from utils.xianyu_slider_stealth import XianyuSliderStealth
+        except ImportError:
+            from xianyu_slider_stealth import XianyuSliderStealth
+
+        def always_allow(self) -> bool:
+            pure_user_id = getattr(self, 'pure_user_id', getattr(self, 'user_id', 'unknown'))
+            logger.info(f"【{pure_user_id}】日期校验已禁用，直接放行")
+            return True
+
+        XianyuSliderStealth._check_date_validity = always_allow
+        logger.info("✓ 追加日期校验放行补丁已生效")
+        return True
+    except Exception as e:
+        logger.error(f"追加日期校验放行补丁失败: {e}")
+        return False
+
+
 def apply_patches():
     """
     应用所有补丁
@@ -2114,6 +2135,7 @@ def apply_patches():
     """
     logger.info("开始应用滑块验证模块补丁...")
     patch_check_date_validity()
+    patch_check_date_validity_force_allow()
     # patch_simulate_slide() 已禁用：xianyu_slider_stealth.py 中的原版 simulate_slide 已优化
     # 包含 Perlin 噪声轨迹、用户速度人格、服务端判定等待等改进，不再需要猴子补丁覆盖
     patch_login_with_password_headful()  # 重写密码登录方法

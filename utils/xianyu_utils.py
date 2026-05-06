@@ -1,7 +1,6 @@
 import base64
 import json
 import subprocess
-from functools import partial
 import time
 import hashlib
 import struct
@@ -11,7 +10,6 @@ from typing import Any, Dict, List
 import blackboxprotobuf
 from loguru import logger
 
-subprocess.Popen = partial(subprocess.Popen, encoding="utf-8")
 import execjs
 
 def get_js_path():
@@ -45,7 +43,13 @@ except Exception as e:
         # 尝试检测系统中的JavaScript运行时
         import subprocess
         try:
-            result = subprocess.run(['node', '--version'], capture_output=True, text=True)
+            result = subprocess.run(
+                ['node', '--version'],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+            )
             if result.returncode == 0:
                 logger.info(f"检测到Node.js版本: {result.stdout.strip()}")
             else:
@@ -59,12 +63,14 @@ def trans_cookies(cookies_str: str) -> dict:
     """将cookies字符串转换为字典"""
     if not cookies_str:
         raise ValueError("cookies不能为空")
-        
+
+    cookies_str = str(cookies_str).replace("\ufeff", "").strip()
     cookies = {}
-    for cookie in cookies_str.split("; "):
+    for cookie in cookies_str.split(";"):
+        cookie = cookie.strip()
         if "=" in cookie:
             key, value = cookie.split("=", 1)
-            cookies[key] = value
+            cookies[key.strip()] = value.strip()
     return cookies
 
 

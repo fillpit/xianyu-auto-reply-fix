@@ -25,7 +25,6 @@ SUPPORTED_NOTIFICATION_TEMPLATE_TYPES = (
     'face_verify',
     'password_login_success',
     'cookie_refresh_success',
-    'account_paused',
 )
 
 
@@ -82,17 +81,6 @@ Cookie数量: {cookie_count}
 Cookie数量: {cookie_count}
 
 账号已可正常使用。''',
-    'account_paused': '''🚫 账号已暂停
-
-账号: {account_id}
-状态: {status_note}
-原因: {pause_reason}
-时间: {time}
-
-说明: {error_message}
-验证入口: {verification_url}
-
-{action_hint}''',
 }
 
 
@@ -212,18 +200,8 @@ def build_face_verify_notification(
     )
 
     if has_screenshot:
-        if verification_type_label == '短信验证':
-            verification_action = '请在自动化网站的账号管理弹窗中完成短信验证:'
-            verification_target = '自动化网站账号管理弹窗中的短信验证界面'
-        elif verification_type_label == '二维码验证':
-            verification_action = '请在自动化网站的账号管理弹窗中扫码完成验证:'
-            verification_target = '自动化网站账号管理弹窗中的验证二维码'
-        elif verification_type_label == '人脸验证':
-            verification_action = '请在自动化网站的账号管理弹窗中完成人脸验证:'
-            verification_target = '自动化网站账号管理弹窗中的人脸验证界面'
-        else:
-            verification_action = '请在自动化网站的账号管理弹窗中完成验证:'
-            verification_target = '自动化网站账号管理弹窗中的验证界面'
+        verification_action = '请在自动化网站的账号管理弹窗中扫描二维码完成验证:'
+        verification_target = '自动化网站账号管理弹窗中的验证二维码'
     else:
         verification_action = '请点击验证链接完成验证:'
         verification_target = verification_url or '无'
@@ -244,12 +222,21 @@ async def _send_qq_notification(config_data: Dict[str, Any], message: str, *, ac
         logger.warning(f"【{account_id}】QQ通知配置为空")
         return False
 
-    # QQ 私信 API 地址：从系统设置读取，未配置则禁用此渠道，避免向未知第三方泄露 QQ 号
-    from db_manager import db_manager
-    api_url = (db_manager.get_system_setting('qq_notification_api_url') or '').strip()
+    api_url = (
+        (config_data.get('api_url') or '').strip()
+        or str(os.getenv('QQ_NOTIFICATION_API_URL') or '').strip()
+    )
     if not api_url:
-        logger.warning(f"【{account_id}】未配置 qq_notification_api_url，已跳过 QQ 私信通知")
+        try:
+            from db_manager import db_manager
+            api_url = (db_manager.get_system_setting('qq_notification_api_url') or '').strip()
+        except Exception:
+            api_url = ''
+
+    if not api_url:
+        logger.warning(f"【{account_id}】未配置QQ通知API地址，已跳过发送")
         return False
+
     params = {'qq': qq_number, 'msg': message}
 
     async with aiohttp.ClientSession() as session:
