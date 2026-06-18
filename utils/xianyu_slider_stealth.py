@@ -2354,69 +2354,91 @@ class XianyuSliderStealth:
                 logger.info(f"【{self.pure_user_id}】滑块浏览器使用本机可执行文件: {self.executable_path}")
             context_options = self._build_playwright_context_options(browser_features)
             launched_with_persistent_profile = False
+            self._launched_with_cdp = False
 
-            if self._should_use_account_persistent_profile():
-                user_data_dir = self._resolve_account_persistent_profile_dir()
-                persistent_launch_options = dict(launch_options)
-                persistent_launch_options.update(context_options)
-                persistent_launch_options.update({
-                    'accept_downloads': True,
-                    'ignore_https_errors': True,
-                })
-                logger.info(f"【{self.pure_user_id}】token_refresh滑块优先复用账号级浏览器目录: {user_data_dir}")
+            # 优先检测 CDP 环境变量，尝试连接外部指纹浏览器（如 CloakBrowser）
+            cdp_url = os.environ.get("XY_CLOAKBROWSER_CDP_URL", os.environ.get("XY_SLIDER_CDP_URL", "")).strip() or None
+            if cdp_url:
+                logger.info(f"【{self.pure_user_id}】检测到 CDP 环境变量，尝试通过 CDP 连接外部浏览器: {cdp_url}")
                 try:
-                    self.context = self.playwright.chromium.launch_persistent_context(
-                        user_data_dir,
-                        **persistent_launch_options,
-                    )
-                    launched_with_persistent_profile = True
+                    self.browser = self.playwright.chromium.connect_over_cdp(cdp_url)
+                    if self.browser.contexts:
+                        self.context = self.browser.contexts[0]
+                        logger.info(f"【{self.pure_user_id}】CDP 连接成功，直接接管已有浏览器上下文 (contexts[0])")
+                    else:
+                        self.context = self.browser.new_context(**context_options)
+                        logger.info(f"【{self.pure_user_id}】CDP 连接成功，创建新浏览器上下文")
+                    self._launched_with_cdp = True
+                except Exception as cdp_err:
+                    logger.error(f"【{self.pure_user_id}】通过 CDP 连接外部浏览器失败: {cdp_err}，将回退到本地启动方案")
                     self.browser = None
-                except Exception as persistent_launch_error:
-                    if not self._is_profile_in_use_launch_error(persistent_launch_error):
-                        raise
-                    cleaned_stale_lock = self._try_cleanup_stale_chromium_singleton_lock(user_data_dir)
-                    if cleaned_stale_lock:
-                        logger.warning(
-                            f"【{self.pure_user_id}】检测到账号级 profile 疑似残留 stale Chromium 锁，"
-                            f"已清理并重试 persistent context: {user_data_dir}"
-                        )
-                        try:
-                            self.context = self.playwright.chromium.launch_persistent_context(
-                                user_data_dir,
-                                **persistent_launch_options,
-                            )
-                            launched_with_persistent_profile = True
-                            self.browser = None
-                        except Exception as retry_launch_error:
-                            if not self._is_profile_in_use_launch_error(retry_launch_error):
-                                raise
-                            logger.warning(
-                                f"【{self.pure_user_id}】清理 stale Chromium 锁后仍提示 profile 被占用，"
-                                f"回退临时上下文链路: {retry_launch_error}"
-                            )
-                    else:
-                        logger.warning(
-                            f"【{self.pure_user_id}】账号级浏览器目录被占用，且无法证明是 stale Chromium 锁，"
-                            f"回退临时上下文链路: {persistent_launch_error}"
-                        )
+                    self.context = None
 
-            if not launched_with_persistent_profile:
-                try:
-                    self.browser = self.playwright.chromium.launch(**launch_options)
-                except Exception as launch_error:
-                    if self.headless and (launch_options.get("executable_path") or launch_options.get("channel")):
-                        fallback_options = dict(launch_options)
-                        fallback_options.pop("executable_path", None)
-                        fallback_options.pop("channel", None)
-                        logger.warning(
-                            f"【{self.pure_user_id}】指定浏览器无头启动失败，回退到 Playwright Chromium: {launch_error}"
+            if not self._launched_with_cdp:
+                if self._should_use_account_persistent_profile():
+                    user_data_dir = self._resolve_account_persistent_profile_dir()
+                    persistent_launch_options = dict(launch_options)
+                    persistent_launch_options.update(context_options)
+                    persistent_launch_options.update({
+                        'accept_downloads': True,
+                        'ignore_https_errors': True,
+                    })
+                    logger.info(f"【{self.pure_user_id}】token_refresh滑块优先复用账号级浏览器目录: {user_data_dir}")
+                    try:
+                        self.context = self.playwright.chromium.launch_persistent_context(
+                            user_data_dir,
+                            **persistent_launch_options,
                         )
-                        self.browser = self.playwright.chromium.launch(**fallback_options)
-                    else:
-                        raise
+                        launched_with_persistent_profile = True
+                        self.browser = None
+                    except Exception as persistent_launch_error:
+                        if not self._is_profile_in_use_launch_error(persistent_launch_error):
+                            raise
+                        cleaned_stale_lock = self._try_cleanup_stale_chromium_singleton_lock(user_data_dir)
+                        if cleaned_stale_lock:
+                            logger.warning(
+                                f"【{self.pure_user_id}】检测到账号级 profile 疑似残留 stale Chromium 锁，"
+                                f"已清理并重试 persistent context: {user_data_dir}"
+                            )
+                            try:
+                                self.context = self.playwright.chromium.launch_persistent_context(
+                                    user_data_dir,
+                                    **persistent_launch_options,
+                                )
+                                launched_with_persistent_profile = True
+                                self.browser = None
+                            except Exception as retry_launch_error:
+                                if not self._is_profile_in_use_launch_error(retry_launch_error):
+                                    raise
+                                logger.warning(
+                                    f"【{self.pure_user_id}】清理 stale Chromium 锁后仍提示 profile 被占用，"
+                                    f"回退临时上下文链路: {retry_launch_error}"
+                                )
+                        else:
+                            logger.warning(
+                                f"【{self.pure_user_id}】账号级浏览器目录被占用，且无法证明是 stale Chromium 锁，"
+                                f"回退临时上下文链路: {persistent_launch_error}"
+                            )
+
+                if not launched_with_persistent_profile:
+                    try:
+                        self.browser = self.playwright.chromium.launch(**launch_options)
+                    except Exception as launch_error:
+                        if self.headless and (launch_options.get("executable_path") or launch_options.get("channel")):
+                            fallback_options = dict(launch_options)
+                            fallback_options.pop("executable_path", None)
+                            fallback_options.pop("channel", None)
+                            logger.warning(
+                                f"【{self.pure_user_id}】指定浏览器无头启动失败，回退到 Playwright Chromium: {launch_error}"
+                            )
+                            self.browser = self.playwright.chromium.launch(**fallback_options)
+                        else:
+                            raise
             
             if launched_with_persistent_profile:
                 logger.info(f"【{self.pure_user_id}】账号级 persistent browser context 启动成功")
+            elif self._launched_with_cdp:
+                logger.info(f"【{self.pure_user_id}】通过 CDP 托管外部浏览器成功，跳过上下文创建步骤")
             else:
                 # 验证浏览器已启动
                 if not self.browser or not self.browser.is_connected():
@@ -10765,65 +10787,97 @@ class XianyuSliderStealth:
                 '--disable-renderer-backgrounding',
             ]
 
-            # 启动浏览器
-            if not self.browser_channel and not self.executable_path:
-                self._ensure_project_playwright_browser()
-
+            # 优先检测 CDP 环境变量，尝试连接外部指纹浏览器（如 CloakBrowser）
+            cdp_url = os.environ.get("XY_CLOAKBROWSER_CDP_URL", os.environ.get("XY_SLIDER_CDP_URL", "")).strip() or None
+            
+            launched_with_cdp = False
             playwright_factory = self._get_sync_playwright_factory()
             playwright = playwright_factory().start()
             self._playwright_thread_id = threading.get_ident()
             browser = None
-            used_profile_lock_fallback = False
-            launch_options: Dict[str, Any] = {
-                'headless': not show_browser,
-                'ignore_default_args': ['--enable-automation'],
-                'args': browser_args,
-            }
-            proxy_settings = self._build_playwright_proxy_settings()
-            if proxy_settings:
-                launch_options['proxy'] = proxy_settings
-                logger.info(f"【{self.pure_user_id}】密码登录浏览器启用代理: {proxy_settings['server']}")
-            if self.browser_channel:
-                launch_options['channel'] = self.browser_channel
-            if self.executable_path:
-                launch_options['executable_path'] = self.executable_path
-            if force_clean_context:
-                browser, context = self._launch_clean_cookie_seeded_context(
-                    playwright,
-                    launch_options,
-                    browser_features,
-                )
-            else:
+            context = None
+
+            if cdp_url:
+                logger.info(f"【{self.pure_user_id}】密码登录流程检测到 CDP 环境变量，尝试通过 CDP 连接外部浏览器: {cdp_url}")
                 try:
-                    context = playwright.chromium.launch_persistent_context(
-                        user_data_dir,
-                        **launch_options,
-                        viewport={'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
-                        user_agent=browser_features['user_agent'],
-                        locale=browser_features['locale'],
-                        accept_downloads=True,
-                        ignore_https_errors=True,
-                        extra_http_headers={
-                            'Accept-Language': browser_features['accept_lang']
-                        }
-                    )
-                except Exception as persistent_launch_error:
-                    if not self._is_profile_in_use_launch_error(persistent_launch_error):
-                        raise
-                    used_profile_lock_fallback = True
-                    logger.warning(
-                        f"【{self.pure_user_id}】持久化浏览器目录被其他 Chromium 进程占用，"
-                        f"自动切换到干净上下文兜底登录: {persistent_launch_error}"
-                    )
+                    browser = playwright.chromium.connect_over_cdp(cdp_url)
+                    if browser.contexts:
+                        context = browser.contexts[0]
+                        logger.info(f"【{self.pure_user_id}】CDP 连接成功，直接接管已有浏览器上下文")
+                    else:
+                        context = browser.new_context(
+                            viewport={'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
+                            user_agent=browser_features['user_agent'],
+                            locale=browser_features['locale'],
+                            accept_downloads=True,
+                            ignore_https_errors=True,
+                            extra_http_headers={
+                                'Accept-Language': browser_features['accept_lang']
+                            }
+                        )
+                        logger.info(f"【{self.pure_user_id}】CDP 连接成功，创建新浏览器上下文")
+                    launched_with_cdp = True
+                except Exception as cdp_err:
+                    logger.error(f"【{self.pure_user_id}】通过 CDP 连接外部浏览器失败: {cdp_err}，将回退到本地启动方案")
+                    browser = None
+                    context = None
+            
+            used_profile_lock_fallback = False
+            if not launched_with_cdp:
+                # 启动浏览器
+                if not self.browser_channel and not self.executable_path:
+                    self._ensure_project_playwright_browser()
+
+                launch_options: Dict[str, Any] = {
+                    'headless': not show_browser,
+                    'ignore_default_args': ['--enable-automation'],
+                    'args': browser_args,
+                }
+                proxy_settings = self._build_playwright_proxy_settings()
+                if proxy_settings:
+                    launch_options['proxy'] = proxy_settings
+                    logger.info(f"【{self.pure_user_id}】密码登录浏览器启用代理: {proxy_settings['server']}")
+                if self.browser_channel:
+                    launch_options['channel'] = self.browser_channel
+                if self.executable_path:
+                    launch_options['executable_path'] = self.executable_path
+                if force_clean_context:
                     browser, context = self._launch_clean_cookie_seeded_context(
                         playwright,
                         launch_options,
                         browser_features,
                     )
+                else:
+                    try:
+                        context = playwright.chromium.launch_persistent_context(
+                            user_data_dir,
+                            **launch_options,
+                            viewport={'width': browser_features['viewport_width'], 'height': browser_features['viewport_height']},
+                            user_agent=browser_features['user_agent'],
+                            locale=browser_features['locale'],
+                            accept_downloads=True,
+                            ignore_https_errors=True,
+                            extra_http_headers={
+                                'Accept-Language': browser_features['accept_lang']
+                            }
+                        )
+                    except Exception as persistent_launch_error:
+                        if not self._is_profile_in_use_launch_error(persistent_launch_error):
+                            raise
+                        used_profile_lock_fallback = True
+                        logger.warning(
+                            f"【{self.pure_user_id}】持久化浏览器目录被其他 Chromium 进程占用，"
+                            f"自动切换到干净上下文兜底登录: {persistent_launch_error}"
+                        )
+                        browser, context = self._launch_clean_cookie_seeded_context(
+                            playwright,
+                            launch_options,
+                            browser_features,
+                        )
             effective_clean_context = force_clean_context or used_profile_lock_fallback
             logger.info(f"【{self.pure_user_id}】已设置浏览器语言为中文（zh-CN）")
 
-            if not browser:
+            if not browser and context:
                 browser = context.browser
             page = context.new_page()
             self._apply_headless_network_fingerprint(page, browser_features)
