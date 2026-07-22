@@ -498,29 +498,6 @@
     color: var(--text-secondary);
   }
 
-  /* 暗色模式下的菜单管理列表 */
-  [data-theme="dark"] .menu-sort-item {
-    background-color: var(--input-bg);
-    border-color: var(--border-color);
-    color: var(--text-color);
-  }
-
-  [data-theme="dark"] .menu-sort-item:hover {
-    background-color: var(--card-bg);
-  }
-
-  [data-theme="dark"] .menu-sort-item.dragging {
-    background-color: var(--bg-secondary);
-  }
-
-  [data-theme="dark"] .menu-sort-item .drag-handle {
-    color: var(--text-secondary);
-  }
-
-  [data-theme="dark"] .menu-sort-item .menu-name {
-    color: var(--text-color);
-  }
-
   /* 暗色模式下的全局滚动条 */
   [data-theme="dark"] {
     scrollbar-color: #475569 #1e293b;

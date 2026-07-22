@@ -141,16 +141,14 @@ function showSection(sectionName) {
     case 'auto-delivery':   // 【自动发货菜单】
         loadDeliveryRules();
         break;
-    case 'notification-channels':  // 【通知渠道菜单】
-        loadNotificationChannels();
-        break;
     case 'message-notifications':  // 【消息通知菜单】
         loadMessageNotifications();
         loadNotificationTemplates();
         break;
     case 'system-settings':    // 【系统设置菜单】
         loadSystemSettings();
-        initMenuManagement();
+        moveBarkToSystemSettings();
+        loadNotificationChannels();
         break;
     case 'logs':            // 【日志管理菜单】
         // 自动加载系统日志
@@ -246,90 +244,13 @@ function initSidebarCollapse() {
 }
 
 // ================================
-// 暗色模式功能
+// 暗色模式功能（已固定为浅色模式）
 // ================================
 
-// 检测系统是否为暗色模式
-function isSystemDarkMode() {
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-}
-
-// 更新主题图标
-function updateDarkModeIcon(mode) {
-    const icon = document.getElementById('darkModeIcon');
-    if (!icon) return;
-
-    // 清除所有可能的图标类
-    icon.classList.remove('bi-moon-fill', 'bi-sun-fill', 'bi-circle-half');
-
-    if (mode === 'auto') {
-        icon.classList.add('bi-circle-half');
-    } else if (mode === 'dark') {
-        icon.classList.add('bi-sun-fill');
-    } else {
-        icon.classList.add('bi-moon-fill');
-    }
-}
-
-// 应用主题
-function applyDarkMode(mode) {
-    const html = document.documentElement;
-    let shouldBeDark = false;
-
-    if (mode === 'auto') {
-        shouldBeDark = isSystemDarkMode();
-    } else if (mode === 'dark') {
-        shouldBeDark = true;
-    }
-
-    if (shouldBeDark) {
-        html.setAttribute('data-theme', 'dark');
-    } else {
-        html.removeAttribute('data-theme');
-    }
-
-    updateDarkModeIcon(mode);
-}
-
-// 切换暗色模式（三态切换：light → dark → auto）
-function toggleDarkMode() {
-    const currentMode = localStorage.getItem('darkMode') || 'light';
-    let nextMode;
-
-    if (currentMode === 'light') {
-        nextMode = 'dark';
-    } else if (currentMode === 'dark') {
-        nextMode = 'auto';
-    } else {
-        nextMode = 'light';
-    }
-
-    localStorage.setItem('darkMode', nextMode);
-    applyDarkMode(nextMode);
-
-    // 显示提示
-    const modeNames = {
-        'light': '浅色模式',
-        'dark': '深色模式',
-        'auto': '跟随系统'
-    };
-    showToast(`已切换至${modeNames[nextMode]}`, 'info');
-}
-
-// 初始化暗色模式
+// 初始化暗色模式 - 固定为浅色模式
 function initDarkMode() {
-    const savedMode = localStorage.getItem('darkMode') || 'light';
-    applyDarkMode(savedMode);
-
-    // 监听系统主题变化
-    if (window.matchMedia) {
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-            const currentMode = localStorage.getItem('darkMode') || 'light';
-            if (currentMode === 'auto') {
-                applyDarkMode('auto');
-            }
-        });
-    }
+    document.documentElement.removeAttribute('data-theme');
+    // 不再响应系统主题变化
 }
 
 // ================================
@@ -6393,9 +6314,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 初始化侧边栏折叠状态
     initSidebarCollapse();
-    // 初始化暗色模式
+    // 初始化暗色模式 - 固定为浅色
     initDarkMode();
-    // 初始化账号保活诊断事件
     initAboutDiagnosticsEvents();
     // 加载系统版本号
     loadSystemVersion();
@@ -6478,9 +6398,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 初始加载仪表盘
     loadDashboard();
-
-    // 加载菜单设置并应用
-    loadMenuSettings();
 
     // 初始化图片关键词事件监听器
     initImageKeywordEventListeners();
@@ -7247,70 +7164,6 @@ const outgoingConfigs = {
 
 // 通知渠道类型配置
 const channelTypeConfigs = {
-    qq: {
-    title: 'QQ通知',
-    description: '需要添加QQ号 <code>3607695896</code> 为好友才能正常接收消息通知',
-    icon: 'bi-chat-dots-fill',
-    color: 'primary',
-    fields: [
-        {
-        id: 'qq_number',
-        label: '接收QQ号码',
-        type: 'text',
-        placeholder: '输入QQ号码',
-        required: true,
-        help: '用于接收通知消息的QQ号码'
-        }
-    ]
-    },
-    dingtalk: {
-    title: '钉钉通知',
-    description: '请设置钉钉机器人Webhook URL，支持自定义机器人和群机器人',
-    icon: 'bi-bell-fill',
-    color: 'info',
-    fields: [
-        {
-        id: 'webhook_url',
-        label: '钉钉机器人Webhook URL',
-        type: 'url',
-        placeholder: 'https://oapi.dingtalk.com/robot/send?access_token=...',
-        required: true,
-        help: '钉钉机器人的Webhook地址'
-        },
-        {
-        id: 'secret',
-        label: '加签密钥（可选）',
-        type: 'text',
-        placeholder: '输入加签密钥',
-        required: false,
-        help: '如果机器人开启了加签验证，请填写密钥'
-        }
-    ]
-    },
-    feishu: {
-    title: '飞书通知',
-    description: '请设置飞书机器人Webhook URL，支持自定义机器人和群机器人',
-    icon: 'bi-chat-square-text-fill',
-    color: 'warning',
-    fields: [
-        {
-        id: 'webhook_url',
-        label: '飞书机器人Webhook URL',
-        type: 'url',
-        placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...',
-        required: true,
-        help: '飞书机器人的Webhook地址'
-        },
-        {
-        id: 'secret',
-        label: '签名密钥（可选）',
-        type: 'text',
-        placeholder: '输入签名密钥',
-        required: false,
-        help: '如果机器人开启了签名验证，请填写密钥'
-        }
-    ]
-    },
     bark: {
     title: 'Bark通知',
     description: 'iOS推送通知服务，支持自建服务器和官方服务器',
@@ -7358,158 +7211,8 @@ const channelTypeConfigs = {
         help: '通知分组名称，用于归类消息'
         }
     ]
-    },
-    email: {
-    title: '邮件通知',
-    description: '通过SMTP服务器发送邮件通知，支持各种邮箱服务商',
-    icon: 'bi-envelope-fill',
-    color: 'success',
-    fields: [
-        {
-        id: 'smtp_server',
-        label: 'SMTP服务器',
-        type: 'text',
-        placeholder: 'smtp.gmail.com',
-        required: true,
-        help: '邮箱服务商的SMTP服务器地址'
-        },
-        {
-        id: 'smtp_port',
-        label: 'SMTP端口',
-        type: 'number',
-        placeholder: '587',
-        required: true,
-        help: '通常为587（TLS）或465（SSL）'
-        },
-        {
-        id: 'email_user',
-        label: '发送邮箱',
-        type: 'email',
-        placeholder: 'your-email@gmail.com',
-        required: true,
-        help: '用于发送通知的邮箱地址'
-        },
-        {
-        id: 'email_password',
-        label: '邮箱密码/授权码',
-        type: 'password',
-        placeholder: '输入密码或授权码',
-        required: true,
-        help: '邮箱密码或应用专用密码'
-        },
-        {
-        id: 'recipient_email',
-        label: '接收邮箱',
-        type: 'email',
-        placeholder: 'recipient@example.com',
-        required: true,
-        help: '用于接收通知的邮箱地址'
-        }
-    ]
-    },
-    webhook: {
-    title: 'Webhook通知',
-    description: '通过HTTP POST请求发送通知到自定义的Webhook地址',
-    icon: 'bi-link-45deg',
-    color: 'warning',
-    fields: [
-        {
-        id: 'webhook_url',
-        label: 'Webhook URL',
-        type: 'url',
-        placeholder: 'https://your-server.com/webhook',
-        required: true,
-        help: '接收通知的Webhook地址'
-        },
-        {
-        id: 'http_method',
-        label: 'HTTP方法',
-        type: 'select',
-        options: [
-            { value: 'POST', text: 'POST' },
-            { value: 'PUT', text: 'PUT' }
-        ],
-        required: true,
-        help: '发送请求使用的HTTP方法'
-        },
-        {
-        id: 'headers',
-        label: '自定义请求头（可选）',
-        type: 'textarea',
-        placeholder: '{"Authorization": "Bearer token", "Content-Type": "application/json"}',
-        required: false,
-        help: 'JSON格式的自定义请求头'
-        }
-    ]
-    },
-    wechat: {
-    title: '微信通知',
-    description: '通过企业微信机器人发送通知消息',
-    icon: 'bi-wechat',
-    color: 'success',
-    fields: [
-        {
-        id: 'webhook_url',
-        label: '企业微信机器人Webhook URL',
-        type: 'url',
-        placeholder: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...',
-        required: true,
-        help: '企业微信群机器人的Webhook地址'
-        }
-    ]
-    },
-    telegram: {
-    title: 'Telegram通知',
-    description: '通过Telegram机器人发送通知消息（需要海外服务器）',
-    icon: 'bi-telegram',
-    color: 'primary',
-    fields: [
-        {
-        id: 'bot_token',
-        label: 'Bot Token',
-        type: 'text',
-        placeholder: '123456789:ABCdefGHIjklMNOpqrsTUVwxyz',
-        required: true,
-        help: '从@BotFather获取的机器人Token'
-        },
-        {
-        id: 'chat_id',
-        label: 'Chat ID',
-        type: 'text',
-        placeholder: '123456789 或 @channel_name',
-        required: true,
-        help: '接收消息的用户ID或频道名'
-        }
-    ]
     }
 };
-
-// 显示添加渠道模态框
-function showAddChannelModal(type) {
-    const config = channelTypeConfigs[type];
-    if (!config) {
-    showToast('不支持的通知渠道类型', 'danger');
-    return;
-    }
-
-    // 设置模态框标题和描述
-    document.getElementById('addChannelModalTitle').textContent = `添加${config.title}`;
-    document.getElementById('channelTypeDescription').innerHTML = config.description;
-    document.getElementById('channelType').value = type;
-
-    // 生成配置字段
-    const fieldsContainer = document.getElementById('channelConfigFields');
-    fieldsContainer.innerHTML = '';
-
-    config.fields.forEach(field => {
-    const fieldHtml = generateFieldHtml(field, 'add_');
-    fieldsContainer.insertAdjacentHTML('beforeend', fieldHtml);
-    });
-
-    // 显示模态框
-    const modal = new bootstrap.Modal(document.getElementById('addChannelModal'));
-    modal.show();
-}
 
 // 生成表单字段HTML
 function generateFieldHtml(field, prefix) {
@@ -7605,8 +7308,6 @@ async function saveNotificationChannel() {
 
     if (response.ok) {
         showToast('通知渠道添加成功', 'success');
-        const modal = bootstrap.Modal.getInstance(document.getElementById('addChannelModal'));
-        modal.hide();
         loadNotificationChannels();
     } else {
         const error = await response.text();
@@ -7616,6 +7317,22 @@ async function saveNotificationChannel() {
     console.error('添加通知渠道失败:', error);
     showToast('添加通知渠道失败', 'danger');
     }
+}
+
+// 将 Bark 通知配置（添加表单 + 渠道列表）移动到系统设置页面
+// 原通知渠道 section 仅作为内容来源，移动后隐藏，避免重复 ID
+function moveBarkToSystemSettings() {
+    const src = document.getElementById('notification-channels-section');
+    const dst = document.querySelector('#system-settings-section .content-body');
+    if (!src || !dst) return;
+
+    const body = src.querySelector('.content-body');
+    if (!body || !body.firstChild) return; // 已移动或无内容
+
+    while (body.firstChild) {
+        dst.appendChild(body.firstChild);
+    }
+    src.style.display = 'none';
 }
 
 // 加载通知渠道列表
@@ -7632,102 +7349,102 @@ async function loadNotificationChannels() {
     }
 
     const channels = await response.json();
-    renderNotificationChannels(channels);
+    renderAvailableChannelTypes(channels);
     } catch (error) {
     console.error('加载通知渠道失败:', error);
     showToast('加载通知渠道失败', 'danger');
     }
 }
 
-// 渲染通知渠道列表
-function renderNotificationChannels(channels) {
-    const tbody = document.getElementById('channelsTableBody');
-    tbody.innerHTML = '';
+// 渲染可添加的渠道类型（每种类型仅可配置一次，已配置的自动隐藏）
+function renderAvailableChannelTypes(channels) {
+    const container = document.getElementById('availableChannelsContainer');
+    if (!container) return;
 
-    if (channels.length === 0) {
-    tbody.innerHTML = `
-        <tr>
-        <td colspan="6" class="text-center py-4 text-muted">
-            <i class="bi bi-bell fs-1 d-block mb-3"></i>
-            <h5>暂无通知渠道</h5>
-            <p class="mb-0">点击上方按钮添加通知渠道</p>
-        </td>
-        </tr>
-    `;
-    return;
-    }
+    // 收集已配置的类型
+    const configuredTypes = new Set((channels || []).map(c => c.type));
 
-    channels.forEach(channel => {
-    const tr = document.createElement('tr');
+    // 筛选出尚未配置的类型
+    const availableTypes = Object.keys(channelTypeConfigs).filter(
+        type => !configuredTypes.has(type)
+    );
 
-    const statusBadge = channel.enabled ?
-        '<span class="badge bg-success">启用</span>' :
-        '<span class="badge bg-secondary">禁用</span>';
+    container.innerHTML = '';
 
-    // 获取渠道类型配置（处理类型映射）
-    let channelType = channel.type;
-    if (channelType === 'ding_talk') {
-        channelType = 'dingtalk';  // 兼容旧的类型名
-    } else if (channelType === 'lark') {
-        channelType = 'feishu';  // 兼容lark类型名
-    }
-    const typeConfig = channelTypeConfigs[channelType];
-    const typeDisplay = typeConfig ? typeConfig.title : channel.type;
-    const typeColor = typeConfig ? typeConfig.color : 'secondary';
+    // 已配置渠道：渲染为「配置Bark通知」卡片（仅保留该卡片容器），支持编辑/删除
+    (channels || []).filter(c => channelTypeConfigs[c.type]).forEach(channel => {
+        const config = channelTypeConfigs[channel.type];
+        const card = document.createElement('div');
+        card.className = 'col-12';
+        card.innerHTML = `
+            <div class="card border-primary shadow-sm">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <span><i class="bi ${config.icon} me-2"></i>配置${config.title}</span>
+                    <span class="badge ${channel.enabled ? 'bg-success' : 'bg-secondary'}">${channel.enabled ? '启用' : '禁用'}</span>
+                </div>
+                <div class="card-body">
+                    <p class="mb-3"><strong>${channel.name}</strong></p>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="editNotificationChannel(${channel.id})">
+                            <i class="bi bi-pencil me-1"></i>编辑
+                        </button>
+                        <button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteNotificationChannel(${channel.id})">
+                            <i class="bi bi-trash me-1"></i>删除
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        container.appendChild(card);
+    });
 
-    // 解析并显示配置信息
-    let configDisplay = '';
-    try {
-        const configData = JSON.parse(channel.config || '{}');
-        const configEntries = Object.entries(configData);
+    availableTypes.forEach(type => {
+        const config = channelTypeConfigs[type];
+        // 复用与原添加弹窗相同的字段 ID，saveNotificationChannel() 可直接复用
+        const fieldsHtml = config.fields.map(field => generateFieldHtml(field, 'add_')).join('');
 
-        if (configEntries.length > 0) {
-        configDisplay = configEntries.map(([key, value]) => {
-            // 隐藏敏感信息
-            if (key.includes('password') || key.includes('token') || key.includes('secret')) {
-            return `${key}: ****`;
-            }
-            // 截断过长的值
-            const displayValue = value.length > 30 ? value.substring(0, 30) + '...' : value;
-            return `${key}: ${displayValue}`;
-        }).join('<br>');
-        } else {
-        configDisplay = channel.config || '无配置';
-        }
-    } catch (e) {
-        // 兼容旧格式
-        configDisplay = channel.config || '无配置';
-        if (configDisplay.length > 30) {
-        configDisplay = configDisplay.substring(0, 30) + '...';
-        }
-    }
-
-    tr.innerHTML = `
-        <td><strong class="text-primary">${channel.id}</strong></td>
-        <td>
-        <div class="d-flex align-items-center">
-            <i class="bi ${typeConfig ? typeConfig.icon : 'bi-bell'} me-2 text-${typeColor}"></i>
-            ${channel.name}
-        </div>
-        </td>
-        <td><span class="badge bg-${typeColor}">${typeDisplay}</span></td>
-        <td><small class="text-muted">${configDisplay}</small></td>
-        <td>${statusBadge}</td>
-        <td>
-        <div class="btn-group" role="group">
-            <button class="btn btn-sm btn-outline-primary" onclick="editNotificationChannel(${channel.id})" title="编辑">
-            <i class="bi bi-pencil"></i>
-            </button>
-            <button class="btn btn-sm btn-outline-danger" onclick="deleteNotificationChannel(${channel.id})" title="删除">
-            <i class="bi bi-trash"></i>
-            </button>
-        </div>
-        </td>
-    `;
-
-    tbody.appendChild(tr);
+        const col = document.createElement('div');
+        col.className = 'col-12';
+        col.innerHTML = `
+            <div class="card border-primary shadow-sm">
+                <div class="card-header bg-primary text-white d-flex align-items-center">
+                    <i class="bi ${config.icon} me-2"></i>
+                    <span>配置${config.title}</span>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info mb-3">
+                        <i class="bi bi-info-circle me-2"></i>${config.description}
+                    </div>
+                    <form id="addChannelForm">
+                        <input type="hidden" id="channelType" value="${type}">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="channelName" class="form-label">渠道名称 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="channelName" placeholder="例如：我的Bark通知" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="channelEnabled" class="form-label">状态</label>
+                                <div class="form-check form-switch mt-2">
+                                    <input class="form-check-input" type="checkbox" id="channelEnabled" checked>
+                                    <label class="form-check-label" for="channelEnabled">启用此通知渠道</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="channelConfigFields">${fieldsHtml}</div>
+                        <div class="d-flex gap-2 mt-3">
+                            <button type="button" class="btn btn-primary" onclick="saveNotificationChannel()">
+                                <i class="bi bi-check-circle me-1"></i>保存配置
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        `;
+        container.appendChild(col);
     });
 }
+
+
 
 
 
@@ -7780,14 +7497,8 @@ async function editNotificationChannel(channelId) {
         return;
     }
 
-    // 处理类型映射
+    // 获取渠道类型配置
     let channelType = channel.type;
-    if (channelType === 'ding_talk') {
-        channelType = 'dingtalk';  // 兼容旧的类型名
-    } else if (channelType === 'lark') {
-        channelType = 'feishu';  // 兼容lark类型名
-    }
-
     const config = channelTypeConfigs[channelType];
     if (!config) {
         showToast('不支持的渠道类型', 'danger');
@@ -7806,13 +7517,7 @@ async function editNotificationChannel(channelId) {
         configData = JSON.parse(channel.config || '{}');
     } catch (e) {
         // 兼容旧格式（直接字符串）
-        if (channel.type === 'qq') {
-        configData = { qq_number: channel.config };
-        } else if (channel.type === 'dingtalk' || channel.type === 'ding_talk') {
-        configData = { webhook_url: channel.config };
-        } else if (channel.type === 'feishu' || channel.type === 'lark') {
-        configData = { webhook_url: channel.config };
-        } else if (channel.type === 'bark') {
+        if (channel.type === 'bark') {
         configData = { device_key: channel.config };
         } else {
         configData = { config: channel.config };
@@ -9996,471 +9701,14 @@ async function loadUserSettings() {
 
         if (response.ok) {
             const settings = await response.json();
-
-            // 设置主题颜色
-            if (settings.theme_color && settings.theme_color.value) {
-                const color = settings.theme_color.value;
-                const picker = document.getElementById('themeColorPicker');
-                const hex = document.getElementById('themeColorHex');
-                if (picker) picker.value = color;
-                if (hex) hex.value = color;
-                applyThemeColor(color);
-                updatePresetSelection(color);
-            } else {
-                localStorage.removeItem('themeColor');
-            }
         }
     } catch (error) {
         console.error('加载用户设置失败:', error);
     }
 }
 
-// 应用主题颜色（支持任意十六进制颜色）
-function applyThemeColor(color) {
-    if (!color || !color.startsWith('#')) return;
-
-    document.documentElement.style.setProperty('--primary-color', color);
-
-    // 计算hover颜色（稍微深一点）
-    const hoverColor = adjustBrightness(color, -20);
-    document.documentElement.style.setProperty('--primary-hover', hoverColor);
-
-    // 计算浅色版本（用于某些UI元素）
-    const lightColor = adjustBrightness(color, 40);
-    document.documentElement.style.setProperty('--primary-light', lightColor);
-
-    // 缓存主题色，供页面首次渲染前预应用，避免刷新闪回默认蓝色
-    localStorage.setItem('themeColor', color);
-}
-
-// 调整颜色亮度
-function adjustBrightness(hex, percent) {
-    const num = parseInt(hex.replace("#", ""), 16);
-    const amt = Math.round(2.55 * percent);
-    const R = (num >> 16) + amt;
-    const G = (num >> 8 & 0x00FF) + amt;
-    const B = (num & 0x0000FF) + amt;
-    return "#" + (0x1000000 + (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 +
-        (G < 255 ? G < 1 ? 0 : G : 255) * 0x100 +
-        (B < 255 ? B < 1 ? 0 : B : 255)).toString(16).slice(1);
-}
-
-// 更新预设颜色按钮选中状态
-function updatePresetSelection(selectedColor) {
-    document.querySelectorAll('.color-preset').forEach(btn => {
-        if (btn.dataset.color === selectedColor) {
-            btn.style.border = '2px solid #333';
-            btn.style.boxShadow = '0 0 0 2px #fff, 0 0 0 4px #333';
-        } else {
-            btn.style.border = '2px solid transparent';
-            btn.style.boxShadow = 'none';
-        }
-    });
-}
-
-// ==================== 菜单管理功能 ====================
-
-// 菜单项配置（默认顺序）
-const DEFAULT_MENU_ITEMS = [
-    { id: 'dashboard', name: '仪表盘', icon: 'bi-speedometer2', required: true },
-    { id: 'accounts', name: '账号管理', icon: 'bi-person-circle', required: false },
-
-    { id: 'items', name: '商品管理', icon: 'bi-box-seam', required: false },
-    { id: 'orders', name: '订单管理', icon: 'bi-receipt-cutoff', required: false },
-    { id: 'auto-reply', name: '自动回复', icon: 'bi-chat-left-text', required: false },
-    { id: 'message-filters', name: '消息过滤', icon: 'bi-funnel', required: false },
-    { id: 'items-reply', name: '指定商品回复', icon: 'bi-chat-left-text', required: false },
-    { id: 'cards', name: '卡券管理', icon: 'bi-credit-card', required: false },
-    { id: 'auto-delivery', name: '自动发货', icon: 'bi-truck', required: false },
-    { id: 'notification-channels', name: '通知渠道', icon: 'bi-bell', required: false },
-    { id: 'message-notifications', name: '消息通知', icon: 'bi-chat-dots', required: false },
-    { id: 'blacklist', name: '黑名单管理', icon: 'bi-person-x', required: false },
-    { id: 'system-settings', name: '系统设置', icon: 'bi-gear', required: true },
-    { id: 'about', name: '关于', icon: 'bi-info-circle', required: true }
-];
-
-// 当前菜单设置
-let menuSettings = {};  // 显示/隐藏设置
-let menuOrder = [];     // 菜单顺序
-let draggedItem = null; // 当前拖拽的元素
-
-// 获取排序后的菜单项
-function getSortedMenuItems() {
-    if (menuOrder.length === 0) {
-        return [...DEFAULT_MENU_ITEMS];
-    }
-
-    // 按保存的顺序排列
-    const sorted = [];
-    menuOrder.forEach(id => {
-        const item = DEFAULT_MENU_ITEMS.find(m => m.id === id);
-        if (item) sorted.push(item);
-    });
-
-    // 添加可能遗漏的新菜单项
-    DEFAULT_MENU_ITEMS.forEach(item => {
-        if (!sorted.find(m => m.id === item.id)) {
-            sorted.push(item);
-        }
-    });
-
-    return sorted;
-}
-
-// 初始化菜单管理UI
-function initMenuManagement() {
-    const container = document.getElementById('menuManagementList');
-    if (!container) return;
-
-    const sortedItems = getSortedMenuItems();
-
-    container.innerHTML = sortedItems.map(item => `
-        <div class="menu-sort-item" draggable="true" data-menu-id="${item.id}">
-            <span class="drag-handle">
-                <i class="bi bi-grip-vertical"></i>
-            </span>
-            <span class="menu-icon">
-                <i class="bi ${item.icon}"></i>
-            </span>
-            <span class="menu-name">${item.name}</span>
-            ${item.required ? '<span class="badge bg-secondary">必选</span>' : ''}
-            <div class="menu-checkbox">
-                <div class="form-check form-switch mb-0">
-                    <input class="form-check-input" type="checkbox" id="menu-${item.id}"
-                        ${item.required ? 'checked disabled' : (menuSettings[item.id] !== false ? 'checked' : '')}
-                        data-menu-id="${item.id}">
-                </div>
-            </div>
-        </div>
-    `).join('');
-
-    // 绑定拖拽事件
-    initDragAndDrop();
-}
-
-// 初始化拖拽功能
-function initDragAndDrop() {
-    const container = document.getElementById('menuManagementList');
-    if (!container) return;
-
-    const items = container.querySelectorAll('.menu-sort-item');
-
-    items.forEach(item => {
-        item.addEventListener('dragstart', handleDragStart);
-        item.addEventListener('dragend', handleDragEnd);
-        item.addEventListener('dragover', handleDragOver);
-        item.addEventListener('dragenter', handleDragEnter);
-        item.addEventListener('dragleave', handleDragLeave);
-        item.addEventListener('drop', handleDrop);
-    });
-}
-
-function handleDragStart(e) {
-    draggedItem = this;
-    this.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/html', this.innerHTML);
-}
-
-function handleDragEnd(e) {
-    this.classList.remove('dragging');
-    document.querySelectorAll('.menu-sort-item').forEach(item => {
-        item.classList.remove('drag-over');
-    });
-    draggedItem = null;
-}
-
-function handleDragOver(e) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    return false;
-}
-
-function handleDragEnter(e) {
-    if (this !== draggedItem) {
-        this.classList.add('drag-over');
-    }
-}
-
-function handleDragLeave(e) {
-    this.classList.remove('drag-over');
-}
-
-function handleDrop(e) {
-    e.stopPropagation();
-    e.preventDefault();
-
-    if (draggedItem !== this) {
-        const container = document.getElementById('menuManagementList');
-        const items = Array.from(container.querySelectorAll('.menu-sort-item'));
-        const draggedIndex = items.indexOf(draggedItem);
-        const targetIndex = items.indexOf(this);
-
-        if (draggedIndex < targetIndex) {
-            this.parentNode.insertBefore(draggedItem, this.nextSibling);
-        } else {
-            this.parentNode.insertBefore(draggedItem, this);
-        }
-    }
-
-    this.classList.remove('drag-over');
-    return false;
-}
-
-// 获取当前菜单顺序
-function getCurrentMenuOrder() {
-    const container = document.getElementById('menuManagementList');
-    if (!container) return [];
-
-    const items = container.querySelectorAll('.menu-sort-item');
-    return Array.from(items).map(item => item.dataset.menuId);
-}
-
-// 保存菜单设置（包括顺序和显示/隐藏）
-async function saveMenuSettings() {
-    // 获取显示/隐藏设置
-    const visibility = {};
-    DEFAULT_MENU_ITEMS.forEach(item => {
-        if (!item.required) {
-            const checkbox = document.getElementById(`menu-${item.id}`);
-            if (checkbox) {
-                visibility[item.id] = checkbox.checked;
-            }
-        }
-    });
-
-    // 获取顺序
-    const order = getCurrentMenuOrder();
-
-    try {
-        // 保存显示设置
-        await fetch(`${apiBase}/user-settings/menu_visibility`, {
-            method: 'PUT',
-            headers: {
-                'Authorization': `Bearer ${authToken}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                value: JSON.stringify(visibility),
-                description: '菜单显示设置'
-            })
-        });
-
-        // 保存顺序设置
-        await fetch(`${apiBase}/user-settings/menu_order`, {
-            method: 'PUT',
-            headers: {
-                'Authorization': `Bearer ${authToken}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                value: JSON.stringify(order),
-                description: '菜单顺序设置'
-            })
-        });
-
-        menuSettings = visibility;
-        menuOrder = order;
-        applyMenuSettings();
-        showToast('菜单设置保存成功', 'success');
-    } catch (error) {
-        console.error('保存菜单设置失败:', error);
-        showToast('保存菜单设置失败', 'danger');
-    }
-}
-
-// 重置菜单设置
-async function resetMenuSettings() {
-    try {
-        // 重置显示设置
-        await fetch(`${apiBase}/user-settings/menu_visibility`, {
-            method: 'PUT',
-            headers: {
-                'Authorization': `Bearer ${authToken}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                value: JSON.stringify({}),
-                description: '菜单显示设置'
-            })
-        });
-
-        // 重置顺序设置
-        await fetch(`${apiBase}/user-settings/menu_order`, {
-            method: 'PUT',
-            headers: {
-                'Authorization': `Bearer ${authToken}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                value: JSON.stringify([]),
-                description: '菜单顺序设置'
-            })
-        });
-
-        menuSettings = {};
-        menuOrder = [];
-
-        // 重新初始化UI
-        initMenuManagement();
-        applyMenuSettings();
-        showToast('菜单设置已恢复默认', 'success');
-    } catch (error) {
-        console.error('重置菜单设置失败:', error);
-        showToast('重置菜单设置失败', 'danger');
-    }
-}
-
-// 应用菜单设置（顺序和显示/隐藏）
-function applyMenuSettings() {
-    const sidebar = document.querySelector('.sidebar-nav');
-    if (!sidebar) return;
-
-    const sortedItems = getSortedMenuItems();
-
-    // 按顺序重新排列侧边栏菜单（普通菜单项使用 0-99）
-    sortedItems.forEach((item, index) => {
-        const menuItem = sidebar.querySelector(`.nav-item[data-menu-id="${item.id}"]`);
-        if (menuItem) {
-            // 设置显示/隐藏
-            if (!item.required) {
-                const isVisible = menuSettings[item.id] !== false;
-                menuItem.style.display = isVisible ? '' : 'none';
-            }
-
-            // 设置顺序（通过CSS order属性）
-            menuItem.style.order = index;
-        }
-    });
-
-    // 确保管理员菜单区块在普通菜单之后（order: 100）
-    const adminSection = document.getElementById('adminMenuSection');
-    if (adminSection) {
-        adminSection.style.order = 100;
-    }
-
-    // 底部分隔符和登出按钮在最后（order: 200+）
-    const dividers = sidebar.querySelectorAll('.nav-divider');
-    dividers.forEach((divider, idx) => {
-        // 跳过管理员区块内的分隔符
-        if (!divider.closest('#adminMenuSection')) {
-            divider.style.order = 200 + idx;
-        }
-    });
-
-    // 登出按钮（没有data-menu-id的nav-item）在最后
-    const logoutItem = sidebar.querySelector('.nav-item:not([data-menu-id])');
-    if (logoutItem) {
-        logoutItem.style.order = 999;
-    }
-}
-
-// 兼容旧函数名
-function applyMenuVisibility() {
-    applyMenuSettings();
-}
-
-// 加载菜单设置
-async function loadMenuSettings() {
-    const token = getAuthToken();
-    if (!token) return;
-    try {
-        const response = await fetch(`${apiBase}/user-settings`, {
-            headers: {
-                'Authorization': `Bearer ${token}`
-            }
-        });
-
-        if (response.ok) {
-            const settings = await response.json();
-
-            // 加载显示设置
-            if (settings.menu_visibility && settings.menu_visibility.value) {
-                try {
-                    menuSettings = JSON.parse(settings.menu_visibility.value);
-                } catch (e) {
-                    menuSettings = {};
-                }
-            }
-
-            // 加载顺序设置
-            if (settings.menu_order && settings.menu_order.value) {
-                try {
-                    menuOrder = JSON.parse(settings.menu_order.value);
-                } catch (e) {
-                    menuOrder = [];
-                }
-            }
-
-            applyMenuSettings();
-        }
-    } catch (error) {
-        console.error('加载菜单设置失败:', error);
-    }
-}
-
-// 主题表单提交处理
+// 页面初始化事件
 document.addEventListener('DOMContentLoaded', function() {
-    // 颜色选择器同步
-    const themeColorPicker = document.getElementById('themeColorPicker');
-    const themeColorHex = document.getElementById('themeColorHex');
-
-    if (themeColorPicker && themeColorHex) {
-        themeColorPicker.addEventListener('input', function() {
-            themeColorHex.value = this.value;
-            applyThemeColor(this.value);
-            updatePresetSelection(this.value);
-        });
-
-        themeColorHex.addEventListener('input', function() {
-            if (/^#[0-9A-Fa-f]{6}$/.test(this.value)) {
-                themeColorPicker.value = this.value;
-                applyThemeColor(this.value);
-                updatePresetSelection(this.value);
-            }
-        });
-    }
-
-    // 预设颜色按钮点击
-    document.querySelectorAll('.color-preset').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const color = this.dataset.color;
-            if (themeColorPicker) themeColorPicker.value = color;
-            if (themeColorHex) themeColorHex.value = color;
-            applyThemeColor(color);
-            updatePresetSelection(color);
-        });
-    });
-
-    const themeForm = document.getElementById('themeForm');
-    if (themeForm) {
-        themeForm.addEventListener('submit', async function(e) {
-            e.preventDefault();
-
-            const themeColor = document.getElementById('themeColorHex')?.value || '#4f46e5';
-
-            try {
-                await fetch(`${apiBase}/user-settings/theme_color`, {
-                    method: 'PUT',
-                    headers: {
-                        'Authorization': `Bearer ${authToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        value: themeColor,
-                        description: '主题颜色'
-                    })
-                });
-
-                applyThemeColor(themeColor);
-                showToast('主题设置保存成功', 'success');
-            } catch (error) {
-                console.error('主题设置失败:', error);
-                showToast('主题设置失败', 'danger');
-            }
-        });
-    }
-
     // 密码表单提交处理
     const passwordForm = document.getElementById('passwordForm');
     if (passwordForm) {
@@ -14809,7 +14057,6 @@ async function loadSystemSettings() {
             console.log('用户信息:', result, '是否管理员:', isAdmin);
 
             // 显示/隐藏管理员专用设置（仅管理员可见）
-            const apiSecuritySettings = document.getElementById('api-security-settings');
             const loginInfoSettings = document.getElementById('login-info-settings');
             const riskControlSettings = document.getElementById('risk-control-settings');
             const outgoingConfigs = document.getElementById('outgoing-configs');
@@ -14817,9 +14064,6 @@ async function loadSystemSettings() {
             const systemRestartBtn = document.getElementById('system-restart-btn');
             const dashboardHotUpdateGroup = document.getElementById('dashboardHotUpdateGroup');
 
-            if (apiSecuritySettings) {
-                apiSecuritySettings.style.display = isAdmin ? 'block' : 'none';
-            }
             if (loginInfoSettings) {
                 loginInfoSettings.style.display = isAdmin ? 'flex' : 'none';
             }
@@ -14842,7 +14086,6 @@ async function loadSystemSettings() {
             // 如果是管理员，加载所有管理员设置
             if (isAdmin) {
                 refreshHotUpdatePreferencesMenu();
-                await loadAPISecuritySettings();
                 await loadRegistrationSettings();
                 await loadLoginInfoSettings();
                 await loadRiskControlNightSettings();
@@ -14864,31 +14107,6 @@ async function loadSystemSettings() {
         if (dashboardHotUpdateGroup) {
             dashboardHotUpdateGroup.style.display = 'none';
         }
-    }
-}
-
-// 加载API安全设置
-async function loadAPISecuritySettings() {
-    try {
-        const response = await fetch('/system-settings', {
-            headers: {
-                'Authorization': `Bearer ${authToken}`
-            }
-        });
-
-        if (response.ok) {
-            const settings = await response.json();
-
-            // 加载QQ回复消息秘钥
-            const qqReplySecretKey = settings.qq_reply_secret_key || '';
-            const qqReplySecretKeyInput = document.getElementById('qqReplySecretKey');
-            if (qqReplySecretKeyInput) {
-                qqReplySecretKeyInput.value = qqReplySecretKey;
-            }
-        }
-    } catch (error) {
-        console.error('加载API安全设置失败:', error);
-        showToast('加载API安全设置失败', 'danger');
     }
 }
 
@@ -15041,90 +14259,6 @@ async function saveDebounceDelay() {
     } catch (error) {
         console.error('保存防抖延迟失败:', error);
         showToast('保存防抖延迟失败', 'danger');
-    }
-}
-
-// 切换密码可见性
-function togglePasswordVisibility(inputId) {
-    const input = document.getElementById(inputId);
-    const icon = document.getElementById(inputId + '-icon');
-
-    if (input && icon) {
-        if (input.type === 'password') {
-            input.type = 'text';
-            icon.className = 'bi bi-eye-slash';
-        } else {
-            input.type = 'password';
-            icon.className = 'bi bi-eye';
-        }
-    }
-}
-
-// 生成随机秘钥
-function generateRandomSecretKey() {
-    // 生成32位随机字符串
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = 'xianyu_qq_';
-    for (let i = 0; i < 24; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-
-    const qqReplySecretKeyInput = document.getElementById('qqReplySecretKey');
-    if (qqReplySecretKeyInput) {
-        qqReplySecretKeyInput.value = result;
-        showToast('随机秘钥已生成', 'success');
-    }
-}
-
-// 更新QQ回复消息秘钥
-async function updateQQReplySecretKey() {
-    const qqReplySecretKey = document.getElementById('qqReplySecretKey').value.trim();
-
-    if (!qqReplySecretKey) {
-        showToast('请输入QQ回复消息API秘钥', 'warning');
-        return;
-    }
-
-    if (qqReplySecretKey.length < 8) {
-        showToast('秘钥长度至少需要8位字符', 'warning');
-        return;
-    }
-
-    try {
-        const response = await fetch('/system-settings/qq_reply_secret_key', {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${authToken}`
-            },
-            body: JSON.stringify({
-                value: qqReplySecretKey,
-                description: 'QQ回复消息API秘钥'
-            })
-        });
-
-        if (response.ok) {
-            showToast('QQ回复消息API秘钥更新成功', 'success');
-
-            // 显示状态信息
-            const statusDiv = document.getElementById('qqReplySecretStatus');
-            const statusText = document.getElementById('qqReplySecretStatusText');
-            if (statusDiv && statusText) {
-                statusText.textContent = `秘钥已更新，长度: ${qqReplySecretKey.length} 位`;
-                statusDiv.style.display = 'block';
-
-                // 3秒后隐藏状态
-                setTimeout(() => {
-                    statusDiv.style.display = 'none';
-                }, 3000);
-            }
-        } else {
-            const errorData = await response.json();
-            showToast(`更新失败: ${errorData.detail || '未知错误'}`, 'danger');
-        }
-    } catch (error) {
-        console.error('更新QQ回复消息秘钥失败:', error);
-        showToast('更新QQ回复消息秘钥失败', 'danger');
     }
 }
 

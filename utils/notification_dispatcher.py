@@ -1,16 +1,6 @@
 import asyncio
-import base64
-import hashlib
-import hmac
 import json
-import os
-import smtplib
 import threading
-import time
-from email.mime.application import MIMEApplication
-from email.mime.image import MIMEImage
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from typing import Any, Dict, Iterable, Optional
 
 import aiohttp
@@ -102,17 +92,6 @@ def _safe_str(value: Any) -> str:
 def normalize_channel_type(channel_type: Any) -> str:
     normalized = str(channel_type or '').strip().lower()
     mapping = {
-        'ding_talk': 'dingtalk',
-        'dingtalk': 'dingtalk',
-        'dingding': 'dingtalk',
-        'feishu': 'feishu',
-        'lark': 'feishu',
-        'qq': 'qq',
-        'email': 'email',
-        'webhook': 'webhook',
-        'wechat': 'wechat',
-        'telegram': 'telegram',
-        'tg': 'telegram',
         'bark': 'bark',
     }
     return mapping.get(normalized, normalized)
@@ -216,104 +195,6 @@ def build_face_verify_notification(
     )
 
 
-async def _send_qq_notification(config_data: Dict[str, Any], message: str, *, account_id: str = '') -> bool:
-    qq_number = (config_data.get('qq_number') or config_data.get('config', '') or '').strip()
-    if not qq_number:
-        logger.warning(f"【{account_id}】QQ通知配置为空")
-        return False
-
-    api_url = (
-        (config_data.get('api_url') or '').strip()
-        or str(os.getenv('QQ_NOTIFICATION_API_URL') or '').strip()
-    )
-    if not api_url:
-        try:
-            from db_manager import db_manager
-            api_url = (db_manager.get_system_setting('qq_notification_api_url') or '').strip()
-        except Exception:
-            api_url = ''
-
-    if not api_url:
-        logger.warning(f"【{account_id}】未配置QQ通知API地址，已跳过发送")
-        return False
-
-    params = {'qq': qq_number, 'msg': message}
-
-    async with aiohttp.ClientSession() as session:
-        async with session.get(api_url, params=params, timeout=10) as response:
-            if response.status in (200, 502):
-                logger.info(f"【{account_id}】QQ通知发送成功")
-                return True
-            logger.warning(f"【{account_id}】QQ通知发送失败: HTTP {response.status}")
-            return False
-
-
-async def _send_dingtalk_notification(config_data: Dict[str, Any], message: str, *, title: str, account_id: str = '') -> bool:
-    webhook_url = (config_data.get('webhook_url') or config_data.get('config', '') or '').strip()
-    secret = config_data.get('secret', '')
-    if not webhook_url:
-        logger.warning(f"【{account_id}】钉钉通知配置为空")
-        return False
-
-    if secret:
-        timestamp = str(round(time.time() * 1000))
-        secret_enc = secret.encode('utf-8')
-        string_to_sign = f'{timestamp}\n{secret}'.encode('utf-8')
-        sign = base64.b64encode(hmac.new(secret_enc, string_to_sign, digestmod=hashlib.sha256).digest()).decode('utf-8')
-        webhook_url += f'&timestamp={timestamp}&sign={sign}'
-
-    data = {
-        'msgtype': 'markdown',
-        'markdown': {
-            'title': title,
-            'text': message,
-        },
-    }
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(webhook_url, json=data, timeout=10) as response:
-            if response.status == 200:
-                logger.info(f"【{account_id}】钉钉通知发送成功")
-                return True
-            logger.warning(f"【{account_id}】钉钉通知发送失败: HTTP {response.status}")
-            return False
-
-
-async def _send_feishu_notification(config_data: Dict[str, Any], message: str, *, account_id: str = '') -> bool:
-    webhook_url = config_data.get('webhook_url', '')
-    secret = config_data.get('secret', '')
-    if not webhook_url:
-        logger.warning(f"【{account_id}】飞书通知未配置webhook")
-        return False
-
-    timestamp = str(int(time.time()))
-    data = {
-        'msg_type': 'text',
-        'content': {'text': message},
-        'timestamp': timestamp,
-    }
-    if secret:
-        string_to_sign = f'{timestamp}\n{secret}'
-        hmac_code = hmac.new(string_to_sign.encode('utf-8'), ''.encode('utf-8'), digestmod=hashlib.sha256).digest()
-        data['sign'] = base64.b64encode(hmac_code).decode('utf-8')
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(webhook_url, json=data, timeout=10) as response:
-            response_text = await response.text()
-            if response.status != 200:
-                logger.warning(f"【{account_id}】飞书通知发送失败: HTTP {response.status}, 响应: {response_text}")
-                return False
-            try:
-                response_json = json.loads(response_text)
-                if response_json.get('code') not in (None, 0):
-                    logger.warning(f"【{account_id}】飞书通知发送失败: {response_json.get('msg', '未知错误')}")
-                    return False
-            except json.JSONDecodeError:
-                pass
-            logger.info(f"【{account_id}】飞书通知发送成功")
-            return True
-
-
 async def _send_bark_notification(config_data: Dict[str, Any], message: str, *, title: str, account_id: str = '') -> bool:
     server_url = str(config_data.get('server_url', 'https://api.day.app') or 'https://api.day.app').rstrip('/')
     device_key = config_data.get('device_key', '')
@@ -352,165 +233,10 @@ async def _send_bark_notification(config_data: Dict[str, Any], message: str, *, 
             return True
 
 
-async def _send_email_notification(config_data: Dict[str, Any], message: str, *, title: str, attachment_path: Optional[str] = None, account_id: str = '') -> bool:
-    smtp_server = config_data.get('smtp_server', '')
-    smtp_port = int(config_data.get('smtp_port', 587))
-    email_user = config_data.get('email_user', '')
-    email_password = config_data.get('email_password', '')
-    recipient_email = config_data.get('recipient_email', '')
-    smtp_from = config_data.get('smtp_from', email_user)
-    smtp_use_tls = config_data.get('smtp_use_tls', smtp_port == 587)
-
-    if not all([smtp_server, email_user, email_password, recipient_email]):
-        logger.warning(f"【{account_id}】邮件通知配置不完整")
-        return False
-
-    def send_email_sync() -> bool:
-        msg = MIMEMultipart()
-        msg['From'] = smtp_from
-        msg['To'] = recipient_email
-        msg['Subject'] = title
-        msg.attach(MIMEText(message, 'plain', 'utf-8'))
-
-        if attachment_path and os.path.exists(attachment_path):
-            with open(attachment_path, 'rb') as handle:
-                attachment_data = handle.read()
-            filename = os.path.basename(attachment_path)
-            if attachment_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                attachment = MIMEImage(attachment_data)
-            else:
-                attachment = MIMEApplication(attachment_data)
-            attachment.add_header('Content-Disposition', 'attachment', filename=filename)
-            msg.attach(attachment)
-
-        server = None
-        try:
-            if smtp_port == 465:
-                server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30)
-            else:
-                server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
-                if smtp_use_tls:
-                    server.starttls()
-            server.login(email_user, email_password)
-            server.send_message(msg)
-            return True
-        finally:
-            if server:
-                try:
-                    server.quit()
-                except Exception:
-                    try:
-                        server.close()
-                    except Exception:
-                        pass
-
-    try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, send_email_sync)
-        if result:
-            logger.info(f"【{account_id}】邮件通知发送成功")
-        return result
-    except smtplib.SMTPAuthenticationError as exc:
-        logger.error(f"【{account_id}】邮件SMTP认证失败: {_safe_str(exc)}")
-        return False
-    except smtplib.SMTPException as exc:
-        logger.error(f"【{account_id}】SMTP协议错误: {_safe_str(exc)}")
-        return False
-    except Exception as exc:
-        logger.error(f"【{account_id}】发送邮件通知异常: {_safe_str(exc)}")
-        return False
-
-
-async def _send_webhook_notification(config_data: Dict[str, Any], message: str, *, title: str, notification_type: str, account_id: str = '') -> bool:
-    webhook_url = config_data.get('webhook_url') or config_data.get('url') or config_data.get('config', '')
-    if not webhook_url:
-        logger.warning(f"【{account_id}】Webhook通知配置为空")
-        return False
-
-    http_method = str(config_data.get('http_method', 'POST')).upper()
-    headers_str = config_data.get('headers', '{}')
-    try:
-        custom_headers = json.loads(headers_str) if isinstance(headers_str, str) else dict(headers_str or {})
-    except (json.JSONDecodeError, TypeError, ValueError):
-        custom_headers = {}
-
-    headers = {'Content-Type': 'application/json'}
-    headers.update(custom_headers)
-    data = {
-        'title': title,
-        'message': message,
-        'content': message,
-        'type': notification_type,
-        'notification_type': notification_type,
-        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-        'source': 'xianyu-auto-reply',
-    }
-
-    async with aiohttp.ClientSession() as session:
-        request = session.post if http_method == 'POST' else session.put if http_method == 'PUT' else None
-        if request is None:
-            logger.warning(f"【{account_id}】不支持的Webhook方法: {http_method}")
-            return False
-        async with request(webhook_url, json=data, headers=headers, timeout=10) as response:
-            if response.status == 200:
-                logger.info(f"【{account_id}】Webhook通知发送成功")
-                return True
-            logger.warning(f"【{account_id}】Webhook通知发送失败: HTTP {response.status}")
-            return False
-
-
-async def _send_wechat_notification(config_data: Dict[str, Any], message: str, *, account_id: str = '') -> bool:
-    webhook_url = config_data.get('webhook_url', '')
-    if not webhook_url:
-        logger.warning(f"【{account_id}】微信通知配置为空")
-        return False
-
-    data = {'msgtype': 'text', 'text': {'content': message}}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(webhook_url, json=data, timeout=10) as response:
-            if response.status == 200:
-                logger.info(f"【{account_id}】微信通知发送成功")
-                return True
-            logger.warning(f"【{account_id}】微信通知发送失败: HTTP {response.status}")
-            return False
-
-
-async def _send_telegram_notification(config_data: Dict[str, Any], message: str, *, account_id: str = '') -> bool:
-    bot_token = config_data.get('bot_token', '')
-    chat_id = config_data.get('chat_id', '')
-    if not all([bot_token, chat_id]):
-        logger.warning(f"【{account_id}】Telegram通知配置不完整")
-        return False
-
-    api_url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
-    data = {'chat_id': chat_id, 'text': message, 'parse_mode': 'HTML'}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(api_url, json=data, timeout=10) as response:
-            if response.status == 200:
-                logger.info(f"【{account_id}】Telegram通知发送成功")
-                return True
-            logger.warning(f"【{account_id}】Telegram通知发送失败: HTTP {response.status}")
-            return False
-
-
 async def send_channel_notification(channel_type: Any, config_data: Dict[str, Any], message: str, *, title: str = '闲鱼管理系统通知', notification_type: str = 'info', attachment_path: Optional[str] = None, account_id: str = '') -> bool:
     normalized_type = normalize_channel_type(channel_type)
-    if normalized_type == 'qq':
-        return await _send_qq_notification(config_data, message, account_id=account_id)
-    if normalized_type == 'dingtalk':
-        return await _send_dingtalk_notification(config_data, message, title=title, account_id=account_id)
-    if normalized_type == 'feishu':
-        return await _send_feishu_notification(config_data, message, account_id=account_id)
     if normalized_type == 'bark':
         return await _send_bark_notification(config_data, message, title=title, account_id=account_id)
-    if normalized_type == 'email':
-        return await _send_email_notification(config_data, message, title=title, attachment_path=attachment_path, account_id=account_id)
-    if normalized_type == 'webhook':
-        return await _send_webhook_notification(config_data, message, title=title, notification_type=notification_type, account_id=account_id)
-    if normalized_type == 'wechat':
-        return await _send_wechat_notification(config_data, message, account_id=account_id)
-    if normalized_type == 'telegram':
-        return await _send_telegram_notification(config_data, message, account_id=account_id)
 
     logger.warning(f"【{account_id}】不支持的通知渠道类型: {channel_type}")
     return False

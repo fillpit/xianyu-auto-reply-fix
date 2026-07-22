@@ -802,7 +802,7 @@ class DBManager:
             CREATE TABLE IF NOT EXISTS notification_channels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
-                type TEXT NOT NULL CHECK (type IN ('qq','ding_talk','dingtalk','feishu','lark','bark','email','webhook','wechat','telegram')),
+                type TEXT NOT NULL CHECK (type IN ('bark')),
                 config TEXT NOT NULL,
                 enabled BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -989,7 +989,6 @@ Cookie数量: {cookie_count}
             # 插入默认系统设置（不包括管理员密码，由reply_server.py初始化）
             cursor.execute('''
             INSERT OR IGNORE INTO system_settings (key, value, description) VALUES
-            ('theme_color', 'blue', '主题颜色'),
             ('registration_enabled', 'true', '是否开启用户注册'),
             ('show_default_login_info', 'true', '是否显示默认登录信息'),
             ('login_captcha_enabled', 'true', '是否开启登录验证码'),
@@ -1004,7 +1003,6 @@ Cookie数量: {cookie_count}
             ('smtp_use_tls', 'true', '是否启用TLS'),
             ('smtp_use_ssl', 'false', '是否启用SSL'),
             ('verification_email_api_url', '', '验证码邮件 API 地址（留空则仅使用 SMTP，不再向旧硬编码地址外发）'),
-            ('qq_notification_api_url', '', 'QQ 私信通知 API 地址（留空则禁用 QQ 私信通知）'),
             ('auto_comment_api_url', '', '自动好评辅助 API 地址（留空则禁用此功能，避免 Cookie 外发）'),
             ('auto_red_flower_interval_seconds', '300', '自动求小红花后台任务检查间隔秒数'),
             ('qq_reply_secret_key', 'xianyu_qq_reply_2024', 'QQ回复消息API秘钥')
@@ -1470,6 +1468,13 @@ Cookie数量: {cookie_count}
                 self.set_system_setting("db_version", "1.7", "数据库版本号")
                 logger.info("数据库升级到版本1.7完成")
 
+            # 升级到版本1.8 - 通知渠道类型唯一约束（每种类型仅可配置一次）
+            if current_version < "1.8":
+                logger.info("开始升级数据库到版本1.8...")
+                self.upgrade_notification_channels_unique(cursor)
+                self.set_system_setting("db_version", "1.8", "数据库版本号")
+                logger.info("数据库升级到版本1.8完成")
+
             # 迁移遗留数据（在所有版本升级完成后执行）
             self.migrate_legacy_data(cursor)
 
@@ -1749,7 +1754,7 @@ Cookie数量: {cookie_count}
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 user_id INTEGER NOT NULL,
-                type TEXT NOT NULL CHECK (type IN ('qq','ding_talk','dingtalk','feishu','lark','bark','email','webhook','wechat','telegram')),
+                type TEXT NOT NULL CHECK (type IN ('bark')),
                 config TEXT NOT NULL,
                 enabled BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1766,19 +1771,10 @@ Cookie数量: {cookie_count}
 
                     # 完整的类型映射规则，支持所有通知渠道
                     type_mapping = {
-                        'ding_talk': 'dingtalk',  # 统一为dingtalk
-                        'dingtalk': 'dingtalk',
-                        'qq': 'qq',
-                        'feishu': 'feishu',      # 飞书通知
-                        'lark': 'lark',          # 飞书通知（英文名）
                         'bark': 'bark',          # Bark通知
-                        'email': 'email',        # 邮件通知
-                        'webhook': 'webhook',    # Webhook通知
-                        'wechat': 'wechat',      # 微信通知
-                        'telegram': 'telegram'   # Telegram通知
                     }
 
-                    new_type = type_mapping.get(old_type, 'qq')  # 默认为qq
+                    new_type = type_mapping.get(old_type, 'bark')  # 默认为bark
 
                     if old_type != new_type:
                         logger.info(f"转换通知渠道类型: {old_type} -> {new_type}")
@@ -1806,18 +1802,66 @@ Cookie数量: {cookie_count}
             cursor.execute("ALTER TABLE notification_channels_new RENAME TO notification_channels")
 
             logger.info("notification_channels表类型升级完成")
-            logger.info("✅ 现在支持以下所有通知渠道类型:")
-            logger.info("   - qq (QQ通知)")
-            logger.info("   - ding_talk/dingtalk (钉钉通知)")
-            logger.info("   - feishu/lark (飞书通知)")
+            logger.info("✅ 现在支持以下通知渠道类型:")
             logger.info("   - bark (Bark通知)")
-            logger.info("   - email (邮件通知)")
-            logger.info("   - webhook (Webhook通知)")
-            logger.info("   - wechat (微信通知)")
-            logger.info("   - telegram (Telegram通知)")
             return True
         except Exception as e:
             logger.error(f"升级notification_channels表类型失败: {e}")
+            raise
+
+    def upgrade_notification_channels_unique(self, cursor):
+        """升级notification_channels表，为 (user_id, type) 添加唯一约束
+
+        确保每种通知渠道类型（按用户）仅可配置一次。已存在的重复数据将自动去重，
+        仅保留每个 (user_id, type) 中最早创建的一条。
+        """
+        try:
+            # 若已存在唯一约束，跳过
+            cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='notification_channels'")
+            row = cursor.fetchone()
+            if row and row[0] and 'UNIQUE(' in row[0].upper():
+                logger.info("notification_channels 已存在唯一约束，跳过升级")
+                return
+
+            logger.info("开始为 notification_channels 添加 (user_id, type) 唯一约束...")
+
+            # 去重：每种 (user_id, type) 仅保留 id 最小（最早创建）的记录
+            cursor.execute('''
+                DELETE FROM notification_channels
+                WHERE id NOT IN (
+                    SELECT MIN(id) FROM notification_channels
+                    GROUP BY COALESCE(user_id, -1), type
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE notification_channels_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    type TEXT NOT NULL CHECK (type IN ('bark')),
+                    config TEXT NOT NULL,
+                    enabled BOOLEAN DEFAULT 1,
+                    user_id INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, type)
+                )
+            ''')
+
+            cursor.execute('''
+                INSERT INTO notification_channels_new
+                    (id, name, type, config, enabled, user_id, created_at, updated_at)
+                SELECT
+                    id, name, type, config, enabled, user_id, created_at, updated_at
+                FROM notification_channels
+            ''')
+
+            cursor.execute('DROP TABLE notification_channels')
+            cursor.execute('ALTER TABLE notification_channels_new RENAME TO notification_channels')
+
+            logger.info("✅ notification_channels 已添加 (user_id, type) 唯一约束")
+        except Exception as e:
+            logger.error(f"升级 notification_channels 唯一约束失败: {e}")
             raise
 
     def upgrade_cookies_table_for_account_login(self, cursor):
@@ -3459,10 +3503,17 @@ Cookie数量: {cookie_count}
 
     # -------------------- 通知渠道操作 --------------------
     def create_notification_channel(self, name: str, channel_type: str, config: str, user_id: int = None) -> int:
-        """创建通知渠道"""
+        """创建通知渠道
+
+        每种渠道类型（按用户）仅允许配置一次，重复配置将抛出异常。
+        """
         with self.lock:
             try:
                 cursor = self.conn.cursor()
+                # 校验同一用户下该渠道类型是否已存在（每种类型仅可配置一次）
+                existing = self.get_notification_channel_by_type(channel_type, user_id)
+                if existing is not None:
+                    raise ValueError(f'通知渠道「{channel_type}」已配置，每种渠道类型仅可配置一次')
                 cursor.execute('''
                 INSERT INTO notification_channels (name, type, config, user_id)
                 VALUES (?, ?, ?, ?)
@@ -3543,6 +3594,42 @@ Cookie数量: {cookie_count}
                 return None
             except Exception as e:
                 logger.error(f"获取通知渠道失败: {e}")
+                return None
+
+    def get_notification_channel_by_type(self, channel_type: str, user_id: int = None) -> Optional[Dict[str, any]]:
+        """根据渠道类型查询已配置渠道（每种类型仅可配置一次，故最多一条）
+
+        返回匹配的记录字典，若不存在则返回 None。
+        """
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                if user_id is not None:
+                    cursor.execute('''
+                    SELECT id, name, type, config, enabled, created_at, updated_at, user_id
+                    FROM notification_channels WHERE type = ? AND user_id = ?
+                    ''', (channel_type, user_id))
+                else:
+                    cursor.execute('''
+                    SELECT id, name, type, config, enabled, created_at, updated_at, user_id
+                    FROM notification_channels WHERE type = ? AND user_id IS NULL
+                    ''', (channel_type,))
+
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'id': row[0],
+                        'name': row[1],
+                        'type': row[2],
+                        'config': row[3],
+                        'enabled': bool(row[4]),
+                        'created_at': row[5],
+                        'updated_at': row[6],
+                        'user_id': row[7]
+                    }
+                return None
+            except Exception as e:
+                logger.error(f"按类型查询通知渠道失败: {e}")
                 return None
 
     def update_notification_channel(self, channel_id: int, name: str, config: str, enabled: bool = True, user_id: int = None) -> bool:
