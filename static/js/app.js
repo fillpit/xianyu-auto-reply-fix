@@ -6321,8 +6321,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadSystemVersion();
     // 加载防抖延迟设置
     loadDebounceDelay();
-    // 启动验证会话监控
-    startCaptchaSessionMonitor();
     // 添加Cookie表单提交
     document.getElementById('addForm').addEventListener('submit', handleManualCookieImport);
 
@@ -9819,7 +9817,10 @@ async function downloadDatabaseBackup() {
 }
 
 // 上传数据库备份
-async function uploadDatabaseBackup() {
+let pendingRestoreFile = null;
+let restoreDbModal = null;
+
+function uploadDatabaseBackup() {
     const fileInput = document.getElementById('databaseFile');
     const file = fileInput.files[0];
 
@@ -9839,8 +9840,23 @@ async function uploadDatabaseBackup() {
     return;
     }
 
-    if (!confirm('恢复数据库将完全替换当前所有数据，包括所有用户、Cookie、卡券等信息。\n\n此操作不可撤销！\n\n确定要继续吗？')) {
-    return;
+    // 暂存待恢复文件，弹出二次确认模态框（不再使用 window.confirm，避免弹窗一闪而过）
+    pendingRestoreFile = file;
+
+    if (!restoreDbModal) {
+    restoreDbModal = new bootstrap.Modal(document.getElementById('restoreDbModal'));
+    }
+    restoreDbModal.show();
+}
+
+// 确认恢复数据库（由模态框“确认恢复”按钮触发）
+async function confirmRestoreDatabase() {
+    if (!pendingRestoreFile) return;
+
+    const file = pendingRestoreFile;
+
+    if (restoreDbModal) {
+    restoreDbModal.hide();
     }
 
     try {
@@ -9862,7 +9878,11 @@ async function uploadDatabaseBackup() {
         showToast(`数据库恢复成功！包含 ${result.user_count} 个用户`, 'success');
 
         // 清空文件选择
+        const fileInput = document.getElementById('databaseFile');
+        if (fileInput) {
         fileInput.value = '';
+        }
+        pendingRestoreFile = null;
 
         // 提示用户刷新页面
         setTimeout(() => {
@@ -14063,6 +14083,7 @@ async function loadSystemSettings() {
             const backupManagement = document.getElementById('backup-management');
             const systemRestartBtn = document.getElementById('system-restart-btn');
             const dashboardHotUpdateGroup = document.getElementById('dashboardHotUpdateGroup');
+            const cloakbrowserSettings = document.getElementById('cloakbrowser-settings');
 
             if (loginInfoSettings) {
                 loginInfoSettings.style.display = isAdmin ? 'flex' : 'none';
@@ -14072,6 +14093,9 @@ async function loadSystemSettings() {
             }
             if (outgoingConfigs) {
                 outgoingConfigs.style.display = isAdmin ? 'block' : 'none';
+            }
+            if (cloakbrowserSettings) {
+                cloakbrowserSettings.style.display = isAdmin ? 'block' : 'none';
             }
             if (backupManagement) {
                 backupManagement.style.display = isAdmin ? 'block' : 'none';
@@ -14090,6 +14114,7 @@ async function loadSystemSettings() {
                 await loadLoginInfoSettings();
                 await loadRiskControlNightSettings();
                 await loadOutgoingConfigs();
+                await loadCloakBrowserSettings();
             }
         }
     } catch (error) {
@@ -14205,6 +14230,64 @@ async function saveRiskControlNightSettings() {
     } catch (error) {
         console.error('保存夜间风控降频设置失败:', error);
         showToast(`保存夜间风控降频设置失败: ${error.message || '未知错误'}`, 'danger');
+    }
+}
+
+// 加载 CloakBrowser 指纹浏览器设置
+async function loadCloakBrowserSettings() {
+    try {
+        const response = await fetch('/system-settings', {
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+        if (!response.ok) {
+            throw new Error('加载 CloakBrowser 设置失败');
+        }
+        const settings = await response.json();
+        const input = document.getElementById('cloakbrowserCdpUrl');
+        if (input) {
+            input.value = settings.cloakbrowser_cdp_url || '';
+        }
+    } catch (error) {
+        console.error('加载 CloakBrowser 设置失败:', error);
+        showToast('加载 CloakBrowser 设置失败', 'danger');
+    }
+}
+
+// 保存 CloakBrowser 指纹浏览器设置
+async function saveCloakBrowserSettings() {
+    const input = document.getElementById('cloakbrowserCdpUrl');
+    const statusBox = document.getElementById('cloakbrowserSettingsStatus');
+    if (!input) return;
+
+    const url = (input.value || '').trim();
+    try {
+        const response = await fetch('/system-settings/cloakbrowser_cdp_url', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({
+                value: url,
+                description: 'CloakBrowser 指纹浏览器 CDP 连接地址'
+            })
+        });
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || '保存失败');
+        }
+        if (statusBox) {
+            statusBox.textContent = url
+                ? `CloakBrowser CDP 地址已保存：${url}`
+                : '已清空 CloakBrowser CDP 地址（将使用本地浏览器启动）';
+            statusBox.classList.remove('d-none');
+        }
+        showToast('CloakBrowser 设置已保存', 'success');
+    } catch (error) {
+        console.error('保存 CloakBrowser 设置失败:', error);
+        showToast(`保存 CloakBrowser 设置失败: ${error.message || '未知错误'}`, 'danger');
     }
 }
 
@@ -18012,10 +18095,51 @@ async function deleteRiskControlLog(logId) {
     }
 }
 
-// 清空风控日志
-async function clearRiskControlLogs() {
-    if (!confirm('确定要清空所有风控日志吗？此操作不可恢复！')) {
-        return;
+// 清空风控日志 - 显示二次确认模态框（不使用 window.confirm，避免弹窗一闪而过）
+function clearRiskControlLogs() {
+    const modalHtml = `
+        <div class="modal fade" id="clearRiskLogsConfirmModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header bg-danger text-white">
+                        <h5 class="modal-title">
+                            <i class="bi bi-exclamation-triangle me-2"></i>确认清空风控日志
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="mb-2"><strong>确定要清空所有风控日志吗？</strong></p>
+                        <p class="text-muted mb-0">此操作不可恢复，清空后所有风控记录将被永久删除。</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-danger" onclick="confirmClearRiskControlLogs()">
+                            <i class="bi bi-trash me-1"></i>确认清空
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // 移除已存在的模态框，避免重复
+    const existingModal = document.getElementById('clearRiskLogsConfirmModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    const modal = new bootstrap.Modal(document.getElementById('clearRiskLogsConfirmModal'));
+    modal.show();
+}
+
+// 执行清空风控日志（由模态框“确认清空”按钮触发）
+async function confirmClearRiskControlLogs() {
+    // 关闭确认模态框
+    const confirmModal = bootstrap.Modal.getInstance(document.getElementById('clearRiskLogsConfirmModal'));
+    if (confirmModal) {
+        confirmModal.hide();
     }
 
     try {
@@ -18095,74 +18219,6 @@ async function handleItemSearch(event) {
 
         const token = localStorage.getItem('auth_token');
         
-        // 启动会话检查器（在搜索过程中检查是否有验证会话）
-        let sessionChecker = null;
-        let checkCount = 0;
-        const maxChecks = 30; // 最多检查30次（30秒）
-        let isSearchCompleted = false; // 标记搜索是否完成
-        
-        sessionChecker = setInterval(async () => {
-            // 如果搜索已完成，停止检查
-            if (isSearchCompleted) {
-                if (sessionChecker) {
-                    clearInterval(sessionChecker);
-                    sessionChecker = null;
-                }
-                return;
-            }
-            
-            try {
-                checkCount++;
-                const checkResponse = await fetch('/api/captcha/sessions');
-                const checkData = await checkResponse.json();
-                
-                if (checkData.sessions && checkData.sessions.length > 0) {
-                    for (const session of checkData.sessions) {
-                        if (!session.completed) {
-                            console.log(`🎨 检测到验证会话: ${session.session_id}`);
-                            if (sessionChecker) {
-                                clearInterval(sessionChecker);
-                                sessionChecker = null;
-                            }
-                            
-                            // 确保监控已启动
-                            if (typeof startCaptchaSessionMonitor === 'function') {
-                                startCaptchaSessionMonitor();
-                            }
-                            
-                            // 弹出验证窗口
-                            if (typeof showCaptchaVerificationModal === 'function') {
-                                showCaptchaVerificationModal(session.session_id);
-                                showToast('🎨 检测到滑块验证，请完成验证', 'warning');
-                                
-                                // 停止搜索时的会话检查器，因为已经弹窗了，由弹窗的监控接管
-                                if (sessionChecker) {
-                                    clearInterval(sessionChecker);
-                                    sessionChecker = null;
-                                    console.log('✅ 已弹窗，停止搜索时的会话检查器');
-                                }
-                            } else {
-                                // 如果函数未定义，使用备用方案
-                                console.error('showCaptchaVerificationModal 未定义，使用备用方案');
-                                window.location.href = `/api/captcha/control/${session.session_id}`;
-                            }
-                            return;
-                        }
-                    }
-                }
-                
-                // 如果检查次数超过限制，停止检查
-                if (checkCount >= maxChecks) {
-                    if (sessionChecker) {
-                        clearInterval(sessionChecker);
-                        sessionChecker = null;
-                    }
-                }
-            } catch (error) {
-                console.error('检查验证会话失败:', error);
-            }
-        }, 1000); // 每秒检查一次
-        
         // 使用 Promise 包装，以便使用 finally
         const fetchPromise = fetch('/items/search_multiple', {
             method: 'POST',
@@ -18176,93 +18232,12 @@ async function handleItemSearch(event) {
             })
         });
 
-        // 请求完成后，停止会话检查器
-        fetchPromise.finally(() => {
-            isSearchCompleted = true;
-            if (sessionChecker) {
-                clearInterval(sessionChecker);
-                sessionChecker = null;
-                console.log('✅ 搜索完成，已停止会话检查器');
-            }
-        });
-
         const response = await fetchPromise;
         console.log('API响应状态:', response.status);
 
         if (response.ok) {
             const data = await response.json();
             console.log('API返回的完整数据:', data);
-
-            // 检查是否需要滑块验证
-            if (data.need_captcha || data.status === 'need_verification') {
-                console.log('检测到需要滑块验证');
-                showSearchStatus(false);
-                
-                // 显示滑块验证模态框
-                const sessionId = data.session_id || 'default';
-                const modal = showCaptchaVerificationModal(sessionId);
-                
-                try {
-                    // 等待用户完成验证
-                    await checkCaptchaCompletion(modal, sessionId);
-                    
-                    // 验证成功，显示搜索状态并重新发起搜索请求
-                    showSearchStatus(true);
-                    document.getElementById('searchProgress').textContent = '验证成功，继续搜索商品...';
-                    
-                    // 重新发起搜索请求
-                    const retryResponse = await fetch('/items/search_multiple', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`
-                        },
-                        body: JSON.stringify({
-                            keyword: keyword,
-                            total_pages: totalPages
-                        })
-                    });
-                    
-                    if (retryResponse.ok) {
-                        const retryData = await retryResponse.json();
-                        
-                        // 再次检查是否需要验证（理论上不应该再需要）
-                        if (retryData.need_captcha || retryData.status === 'need_verification') {
-                            showSearchStatus(false);
-                            showToast('验证后仍需要滑块，请联系管理员', 'danger');
-                            return;
-                        }
-                        
-                        // 处理搜索结果
-                        searchResultsData = retryData.data || [];
-                        console.log('验证后搜索结果:', searchResultsData);
-                        console.log('searchResultsData长度:', searchResultsData.length);
-
-                        searchPageSize = pageSize;
-                        currentSearchPage = 1;
-                        totalSearchPages = Math.ceil(searchResultsData.length / searchPageSize);
-
-                        if (retryData.error) {
-                            showToast(`搜索完成，但遇到问题: ${retryData.error}`, 'warning');
-                        }
-
-                        showSearchStatus(false);
-                        displaySearchResults();
-                        updateSearchStats(retryData);
-                    } else {
-                        const retryError = await retryResponse.json();
-                        showSearchStatus(false);
-                        showToast(`验证后搜索失败: ${retryError.detail || '未知错误'}`, 'danger');
-                        showNoSearchResults();
-                    }
-                } catch (error) {
-                    console.error('滑块验证失败:', error);
-                    showSearchStatus(false);
-                    showToast('滑块验证失败或超时', 'danger');
-                    showNoSearchResults();
-                }
-                return;
-            }
 
             // 正常搜索结果（无需验证）
             // 修复字段名：使用data.data而不是data.items
@@ -19718,267 +19693,6 @@ async function getBenefitsInfo() {
         showToast('获取权益信息失败: ' + error.message, 'danger');
         return null;
     }
-}
-
-// =============================================================================
-// 滑块验证相关函数
-// =============================================================================
-
-// 会话监控相关变量
-let captchaSessionMonitor = null;
-let activeCaptchaModal = null;
-let monitoredSessions = new Set();
-
-// 开始监控验证会话
-function startCaptchaSessionMonitor() {
-    if (captchaSessionMonitor) {
-        console.log('⚠️ 会话监控已在运行中');
-        return; // 已经在监控中
-    }
-    
-    console.log('🔍 开始监控验证会话...');
-    
-    let checkCount = 0;
-    captchaSessionMonitor = setInterval(async () => {
-        try {
-            checkCount++;
-            const response = await fetch('/api/captcha/sessions');
-            const data = await response.json();
-            
-            // 每10次检查输出一次日志
-            if (checkCount % 10 === 0) {
-                console.log(`🔍 监控检查 #${checkCount}: 活跃会话数=${data.count || 0}`);
-            }
-            
-            if (data.sessions && data.sessions.length > 0) {
-                console.log('📋 当前活跃会话:', data.sessions);
-                
-                for (const session of data.sessions) {
-                    // 如果会话已完成或不存在，从监控列表中移除
-                    if (session.completed || !session.has_websocket) {
-                        if (monitoredSessions.has(session.session_id)) {
-                            console.log(`✅ 会话已完成或已关闭: ${session.session_id}`);
-                            monitoredSessions.delete(session.session_id);
-                        }
-                        continue;
-                    }
-                    
-                    // 如果发现新的会话（未完成且未被监控），立即弹出窗口
-                    if (!monitoredSessions.has(session.session_id)) {
-                        console.log(`✨ 检测到新的验证会话: ${session.session_id}`);
-                        monitoredSessions.add(session.session_id);
-                        
-                        // 自动弹出验证窗口
-                        showCaptchaVerificationModal(session.session_id);
-                        showToast('🎨 检测到滑块验证，请完成验证', 'warning');
-                    }
-                }
-            }
-            
-            // 如果没有活跃会话且没有监控中的会话，停止监控
-            if ((!data.sessions || data.sessions.length === 0) && monitoredSessions.size === 0) {
-                console.log('✅ 没有活跃会话且没有监控中的会话，停止全局监控');
-                stopCaptchaSessionMonitor();
-            }
-        } catch (error) {
-            console.error('监控验证会话失败:', error);
-        }
-    }, 1000); // 每秒检查一次
-    
-    console.log('✅ 会话监控已启动');
-}
-
-// 停止监控验证会话
-function stopCaptchaSessionMonitor() {
-    if (captchaSessionMonitor) {
-        clearInterval(captchaSessionMonitor);
-        captchaSessionMonitor = null;
-        monitoredSessions.clear();
-        console.log('⏹️ 停止监控验证会话');
-    }
-}
-
-// 手动测试会话监控（用于调试）
-async function testCaptchaSessionMonitor() {
-    try {
-        console.log('🧪 测试会话监控...');
-        const response = await fetch('/api/captcha/sessions');
-        const data = await response.json();
-        console.log('📊 API响应:', data);
-        return data;
-    } catch (error) {
-        console.error('❌ 测试失败:', error);
-        return null;
-    }
-}
-
-// 手动弹出验证窗口（用于调试）
-function testShowCaptchaModal(sessionId = 'default') {
-    console.log(`🧪 手动弹出验证窗口: ${sessionId}`);
-    showCaptchaVerificationModal(sessionId);
-}
-
-// 暴露到全局，方便调试和使用
-window.testCaptchaSessionMonitor = testCaptchaSessionMonitor;
-window.testShowCaptchaModal = testShowCaptchaModal;
-window.startCaptchaSessionMonitor = startCaptchaSessionMonitor;
-window.stopCaptchaSessionMonitor = stopCaptchaSessionMonitor;
-window.showCaptchaVerificationModal = showCaptchaVerificationModal;
-
-// 显示滑块验证模态框
-function showCaptchaVerificationModal(sessionId = 'default') {
-    // 如果已经有活跃的弹窗，不重复弹出
-    if (activeCaptchaModal) {
-        console.log('已有活跃的验证窗口，不重复弹出');
-        return activeCaptchaModal;
-    }
-    
-    const modal = new bootstrap.Modal(document.getElementById('captchaVerifyModal'), {
-        backdrop: 'static',
-        keyboard: false
-    });
-    const iframe = document.getElementById('captchaIframe');
-    const loadingIndicator = document.getElementById('captchaLoadingIndicator');
-    
-    // 获取服务器地址
-    const serverUrl = window.location.origin;
-    
-    // 重置 iframe
-    iframe.style.display = 'none';
-    loadingIndicator.style.display = 'block';
-    
-    // 设置 iframe 源（嵌入模式）
-    iframe.src = `${serverUrl}/api/captcha/control/${sessionId}?embed=1`;
-    
-    // iframe 加载完成后隐藏加载指示器
-    iframe.onload = function() {
-        loadingIndicator.style.display = 'none';
-        iframe.style.display = 'block';
-    };
-    
-    // 显示模态框
-    modal.show();
-    activeCaptchaModal = modal;
-    
-    // 自动启动验证完成监控
-    startCheckCaptchaCompletion(modal, sessionId);
-    
-    // 监听模态框关闭事件
-    document.getElementById('captchaVerifyModal').addEventListener('hidden.bs.modal', () => {
-        activeCaptchaModal = null;
-        // 从监控列表中移除
-        monitoredSessions.delete(sessionId);
-        
-        // 如果没有其他监控中的会话，停止全局监控
-        if (monitoredSessions.size === 0) {
-            stopCaptchaSessionMonitor();
-            console.log('✅ 弹窗关闭，已停止全局监控');
-        }
-    }, { once: true });
-    
-    // 返回 modal 实例用于后续控制
-    return modal;
-}
-
-// 启动验证完成监控（自动模式）
-function startCheckCaptchaCompletion(modal, sessionId) {
-    let checkInterval = null;
-    let isClosed = false;
-    
-    const closeModal = () => {
-        if (isClosed) return;
-        isClosed = true;
-        
-        if (checkInterval) {
-            clearInterval(checkInterval);
-            checkInterval = null;
-        }
-        
-        // 从监控列表中移除
-        monitoredSessions.delete(sessionId);
-        
-        // 如果没有其他监控中的会话，停止全局监控
-        if (monitoredSessions.size === 0) {
-            stopCaptchaSessionMonitor();
-            console.log('✅ 所有验证已完成，已停止全局监控');
-        }
-        
-        modal.hide();
-        activeCaptchaModal = null;
-        showToast('✅ 滑块验证成功！', 'success');
-        console.log(`✅ 验证完成: ${sessionId}`);
-    };
-    
-    checkInterval = setInterval(async () => {
-        try {
-            const response = await fetch(`/api/captcha/status/${sessionId}`);
-            const data = await response.json();
-            
-            console.log(`检查验证状态: ${sessionId}`, data);
-            
-            // 如果验证完成，或者会话不存在（已关闭），都视为完成
-            if (data.completed || (data.session_exists === false && data.success)) {
-                closeModal();
-                return;
-            }
-        } catch (error) {
-            console.error('检查验证状态失败:', error);
-            // 如果API调用失败，可能是会话已关闭，也视为完成
-            if (error.message && error.message.includes('404')) {
-                closeModal();
-            }
-        }
-    }, 1000); // 每秒检查一次
-    
-    // 5分钟超时
-    setTimeout(() => {
-        if (!isClosed && checkInterval) {
-            clearInterval(checkInterval);
-            checkInterval = null;
-            if (activeCaptchaModal) {
-                modal.hide();
-                activeCaptchaModal = null;
-                showToast('❌ 验证超时，请重试', 'danger');
-            }
-        }
-    }, 300000);
-    
-    // 模态框关闭时停止检查
-    document.getElementById('captchaVerifyModal').addEventListener('hidden.bs.modal', () => {
-        if (checkInterval) {
-            clearInterval(checkInterval);
-            checkInterval = null;
-        }
-        isClosed = true;
-    }, { once: true });
-}
-
-// 检查验证是否完成（Promise模式，兼容旧代码）
-async function checkCaptchaCompletion(modal, sessionId) {
-    return new Promise((resolve, reject) => {
-        const checkInterval = setInterval(async () => {
-            try {
-                const response = await fetch(`/api/captcha/status/${sessionId}`);
-                const data = await response.json();
-                
-                if (data.completed) {
-                    clearInterval(checkInterval);
-                    resolve(true);
-                }
-            } catch (error) {
-                console.error('检查验证状态失败:', error);
-            }
-        }, 1000);
-        
-        setTimeout(() => {
-            clearInterval(checkInterval);
-            reject(new Error('验证超时'));
-        }, 300000);
-        
-        document.getElementById('captchaVerifyModal').addEventListener('hidden.bs.modal', () => {
-            clearInterval(checkInterval);
-        }, { once: true });
-    });
 }
 
 // ========================= 验证截图相关功能 =========================

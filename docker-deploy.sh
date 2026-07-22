@@ -112,15 +112,9 @@ build_image() {
 
 # 启动服务
 start_services() {
-    local profile=""
-    if [ "$1" = "with-nginx" ]; then
-        profile="--profile with-nginx"
-        print_info "启动服务（包含 Nginx）..."
-    else
-        print_info "启动基础服务..."
-    fi
+    print_info "启动服务..."
 
-    compose $profile up -d
+    compose up -d
     print_success "服务启动完成"
 
     # 等待服务就绪
@@ -130,7 +124,7 @@ start_services() {
     # 检查服务状态
     if compose ps | grep -q "Up"; then
         print_success "服务运行正常"
-        show_access_info "$1"
+        show_access_info
     else
         print_error "服务启动失败"
         compose logs
@@ -173,22 +167,14 @@ show_status() {
 
 # 显示访问信息
 show_access_info() {
-    local with_nginx="$1"
-    
     echo ""
     print_success "🎉 部署完成！"
     echo ""
     
-    if [ "$with_nginx" = "with-nginx" ]; then
-        echo "📱 访问地址:"
-        echo "   HTTP:  http://localhost"
-        echo "   HTTPS: https://localhost (如果配置了SSL)"
-    else
-        local web_port
-        web_port=$(get_web_port)
-        echo "📱 访问地址:"
-        echo "   HTTP: http://localhost:${web_port}"
-    fi
+    local web_port
+    web_port=$(get_web_port)
+    echo "📱 访问地址:"
+    echo "   HTTP: http://localhost:${web_port}"
     
     echo ""
     echo "🔐 默认登录信息:"
@@ -304,7 +290,7 @@ show_help() {
     echo "命令:"
     echo "  init                初始化配置文件"
     echo "  build               构建 Docker 镜像"
-    echo "  start [with-nginx]  启动服务（可选包含 Nginx）"
+    echo "  start                启动服务"
     echo "  stop                停止服务"
     echo "  restart             重启服务"
     echo "  status              查看服务状态"
@@ -317,9 +303,8 @@ show_help() {
     echo ""
     echo "示例:"
     echo "  $0 init             # 初始化配置"
-    echo "  $0 start            # 启动基础服务"
-    echo "  $0 start with-nginx # 启动包含 Nginx 的服务"
-    echo "  $0 logs xianyu-app  # 查看应用日志"
+  echo "  $0 start            # 启动基础服务"
+  echo "  $0 logs xianyu-app  # 查看应用日志"
     echo ""
 }
 
@@ -338,7 +323,7 @@ main() {
             check_dependencies
             init_config
             build_image
-            start_services "$2"
+            start_services
             ;;
         "stop")
             stop_services

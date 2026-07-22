@@ -87,7 +87,6 @@ if [ "${USE_XVFB}" = "true" ] || [ "${ENABLE_HEADFUL}" = "true" ]; then
     
     # 查找并杀死旧的 Xvfb 进程
     pkill -9 Xvfb 2>/dev/null || true
-    pkill -9 x11vnc 2>/dev/null || true
     
     # 清理锁文件
     rm -f /tmp/.X*-lock 2>/dev/null || true
@@ -126,20 +125,7 @@ if [ "${USE_XVFB}" = "true" ] || [ "${ENABLE_HEADFUL}" = "true" ]; then
     done
     
     if [ "$XVFB_STARTED" = "true" ]; then
-        # 可选：启动 VNC 服务器用于远程查看（如果需要）
-        if [ "${ENABLE_VNC}" = "true" ]; then
-            echo "启动 VNC 服务器..."
-            x11vnc -display $DISPLAY -forever -shared -rfbport 5900 -nopw > /tmp/x11vnc.log 2>&1 &
-            VNC_PID=$!
-            sleep 1
-            
-            if ps -p $VNC_PID > /dev/null 2>&1; then
-                echo "✓ VNC 服务器启动成功 (PID: $VNC_PID, 端口: 5900)"
-                echo "  可以通过 VNC 客户端连接到 <容器IP>:5900 查看浏览器界面"
-            else
-                echo "⚠ VNC 服务器启动失败，查看日志: /tmp/x11vnc.log"
-            fi
-        fi
+        echo "✓ 虚拟显示已就绪"
     else
         echo "⚠ Xvfb 启动失败（尝试了 $MAX_ATTEMPTS 次），将使用无头模式"
         echo "  查看详细日志: /tmp/xvfb.log"
@@ -157,7 +143,6 @@ echo "  - API主机: ${API_HOST:-0.0.0.0}"
 echo "  - Debug模式: ${DEBUG:-false}"
 echo "  - 自动重载: ${RELOAD:-false}"
 echo "  - 虚拟显示: ${USE_XVFB:-false}"
-echo "  - VNC服务: ${ENABLE_VNC:-false}"
 echo "  - DISPLAY: ${DISPLAY:-未设置}"
 echo "========================================"
 

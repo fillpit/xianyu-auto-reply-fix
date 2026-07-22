@@ -29,7 +29,6 @@ COOKIES_STR=your_cookie_string
 # Docker 图形模式（可选）
 USE_XVFB=true
 ENABLE_HEADFUL=true
-ENABLE_VNC=false
 DISPLAY=:99
 ```
 

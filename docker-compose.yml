@@ -23,19 +23,12 @@ services:
       - "${WEB_PORT:-9000}:8090"
     volumes:
       # 数据持久化
-      - ./data:/app/data:rw
-      - ./global_config.yml:/app/global_config.yml:ro
-      # 可选：如果需要自定义配置
-      # - ./custom_config.yml:/app/global_config.yml:ro
-      # 可选：备份目录
-      - ./backups:/app/backups:rw
-      # 开发模式：挂载源代码（修改代码后只需重启容器）
-      - .:/app:rw
+      - xianyu-data:/app:rw
+      - /usr/share/fonts:/usr/share/fonts:ro # 挂载宿主机字体库
     environment:
       # 启用虚拟显示（有头模式）
       - USE_XVFB=true           # 启用 Xvfb 虚拟显示
       - ENABLE_HEADFUL=true     # 启用有头模式
-      - ENABLE_VNC=false         # 启用 VNC 服务器（可选）
       - DISPLAY=:99             # 虚拟显示编号
       - XY_CLOAKBROWSER_CDP_URL=${XY_CLOAKBROWSER_CDP_URL:-}
       - PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-1}
@@ -76,8 +69,6 @@ services:
       - TOKEN_RETRY_INTERVAL=${TOKEN_RETRY_INTERVAL:-300}
       - MESSAGE_EXPIRE_TIME=${MESSAGE_EXPIRE_TIME:-300000}
 
-    networks:
-      - xianyu-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 30s
@@ -94,12 +85,6 @@ services:
           memory: ${MEMORY_RESERVATION:-512}M
           cpus: '${CPU_RESERVATION:-0.5}'
 
-networks:
-  xianyu-network:
-    driver: bridge
-
 volumes:
   xianyu-data:
-    driver: local
-  xianyu-logs:
     driver: local

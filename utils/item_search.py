@@ -49,113 +49,6 @@ class XianyuSearcher:
         self.api_responses = []
         self.user_id = "default"  # 默认用户ID
 
-    async def _handle_scratch_captcha_manual(self, page, max_retries=3, wait_for_completion=True):
-        """人工处理刮刮乐滑块（远程控制 + 截图备份）
-        
-        参数:
-            wait_for_completion: 是否等待用户完成验证
-                - True: 等待用户完成验证（默认，用于直接处理）
-                - False: 创建会话后立即返回（用于前端处理）
-        """
-        import random
-        
-        logger.warning("=" * 60)
-        logger.warning("🎨 检测到刮刮乐验证，需要人工处理！")
-        logger.warning("=" * 60)
-        
-        # 获取会话ID
-        session_id = getattr(self, 'user_id', 'default')
-        
-        # 【新方案】启用远程控制
-        use_remote_control = getattr(self, 'use_remote_control', True)
-        
-        if use_remote_control:
-            try:
-                from utils.captcha_remote_control import captcha_controller
-                
-                # 创建远程控制会话
-                logger.warning(f"🌐 启动远程控制会话: {session_id}")
-                session_info = await captcha_controller.create_session(session_id, page)
-                
-                # 获取控制页面URL
-                import socket
-                import os
-                
-                # 尝试多种方式获取IP
-                local_ip = "localhost"
-                
-                # 方法1：从环境变量获取（Docker/配置文件）
-                local_ip = os.getenv('SERVER_HOST') or os.getenv('PUBLIC_IP')
-                
-                if not local_ip:
-                    # 方法2：尝试获取外网IP
-                    try:
-                        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                        s.connect(("8.8.8.8", 80))
-                        local_ip = s.getsockname()[0]
-                        s.close()
-                        
-                        # 检查是否是Docker内网IP（172.x.x.x 或 10.x.x.x）
-                        if local_ip.startswith('172.') or local_ip.startswith('10.'):
-                            logger.warning(f"⚠️ 检测到Docker内网IP: {local_ip}")
-                            local_ip = None  # 重置，使用localhost
-                    except:
-                        pass
-                
-                if not local_ip:
-                    local_ip = "localhost"
-                    logger.warning("⚠️ 无法获取外网IP，使用 localhost")
-                    logger.warning("💡 如果在Docker中，请设置环境变量 SERVER_HOST 为公网IP")
-                
-                control_url = f"http://{local_ip}:8000/api/captcha/control/{session_id}"
-                
-                logger.warning("=" * 60)
-                logger.warning(f"🌐 远程控制已启动！")
-                logger.warning(f"📱 请访问以下网址进行验证：")
-                logger.warning(f"   {control_url}")
-                logger.warning("=" * 60)
-                logger.warning(f"💡 或直接访问: http://{local_ip}:8000/api/captcha/control")
-                logger.warning(f"   然后输入会话ID: {session_id}")
-                logger.warning("=" * 60)
-                
-                # 如果不等待完成，立即返回特殊值给调用者
-                if not wait_for_completion:
-                    logger.warning("⚠️ 不等待验证完成，立即返回给前端处理")
-                    return 'need_captcha'  # 返回特殊值，表示需要前端处理
-                
-                # 等待用户完成
-                logger.warning("⏳ 等待用户通过网页完成验证...")
-                
-                # 循环检查是否完成
-                max_wait_time = 180  # 3分钟
-                check_interval = 1  # 每秒检查一次
-                elapsed_time = 0
-                
-                while elapsed_time < max_wait_time:
-                    await asyncio.sleep(check_interval)
-                    elapsed_time += check_interval
-                    
-                    # 检查是否完成
-                    if captcha_controller.is_completed(session_id):
-                        logger.success("✅ 远程验证成功！")
-                        await captcha_controller.close_session(session_id)
-                        return True
-                    
-                    # 每10秒提示一次
-                    if elapsed_time % 10 == 0:
-                        logger.info(f"⏳ 仍在等待...已等待 {elapsed_time} 秒")
-                
-                logger.error(f"❌ 远程验证超时（{max_wait_time}秒）")
-                await captcha_controller.close_session(session_id)
-                return False
-                
-            except Exception as e:
-                logger.error(f"远程控制启动失败: {e}")
-                logger.warning("⚠️ 降级使用传统方式")
-        
-        logger.error("❌ 人工验证超时，已达到最大等待时间")
-        return False
-    
     async def _handle_scratch_captcha_async(self, page, max_retries=15):
         """异步处理刮刮乐类型滑块"""
         import random
@@ -553,10 +446,8 @@ class XianyuSearcher:
             
             if is_scratch_captcha:
                 logger.warning("🎨 检测到刮刮乐类型滑块")
-                
-                # 人工处理模式 - 等待用户完成验证
-                logger.warning("⚠️ 刮刮乐需要人工处理，等待验证完成")
-                slider_success = await self._handle_scratch_captcha_manual(page, max_retries=3, wait_for_completion=True)
+                logger.info("🔄 使用自动滑动处理刮刮乐滑块")
+                slider_success = await self._handle_scratch_captcha_async(page, max_retries=15)
             else:
                 actual_max_retries = max_retries
                 slider_success = None

@@ -14,7 +14,7 @@
 ## 默认排除的内容
 
 - 用户配置和运行时目录，例如 `global_config.yml`、`data/`、`logs/`、`browser_data/`、`update_backup/`、`venv/`
-- 发布和部署文件，例如 `.github/`、`Dockerfile*`、`docker-compose*.yml`、`nginx/`
+- 发布和部署文件，例如 `.github/`、`Dockerfile*`、`docker-compose*.yml`
 - 文档、脚本、数据库和缓存文件，例如 `.md`、`.sh`、`.sql`
 
 ## 建议发版步骤

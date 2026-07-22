@@ -70,8 +70,6 @@ RUN apt-get -o Acquire::Retries=5 update && \
         libxfixes3 \
         xdg-utils \
         xvfb \
-        x11vnc \
-        fluxbox \
         # OpenCV运行时依赖
         libgl1 \
         libglib2.0-0 \
@@ -122,14 +120,12 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8090/health || exit 1
 
 # 复制启动脚本
-# 复制启动脚本和调试工具
 COPY entrypoint.sh /app/entrypoint.sh
-COPY debug-xvfb.sh /app/debug-xvfb.sh
 
 # 设置执行权限（使用多种方式确保权限正确）
-RUN chmod +x /app/entrypoint.sh /app/debug-xvfb.sh && \
-    chmod 755 /app/entrypoint.sh /app/debug-xvfb.sh && \
-    ls -la /app/entrypoint.sh /app/debug-xvfb.sh
+RUN chmod +x /app/entrypoint.sh && \
+    chmod 755 /app/entrypoint.sh && \
+    ls -la /app/entrypoint.sh
 
 # 启动命令
 CMD ["/app/entrypoint.sh"]

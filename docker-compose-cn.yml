@@ -13,7 +13,6 @@ services:
     entrypoint: ["/bin/bash", "-c", "dos2unix /app/entrypoint.sh 2>/dev/null || true; bash /app/entrypoint.sh"]
     ports:
       - "8000:8090"
-      # - "5900:5900"    # VNC 端口（可选，用于远程查看浏览器）
     volumes:
       # 数据持久化
       - ./data:/app/data:rw
@@ -29,7 +28,6 @@ services:
       # 启用虚拟显示（有头模式）
       # - USE_XVFB=true           # 启用 Xvfb 虚拟显示
       # - ENABLE_HEADFUL=true     # 启用有头模式
-      # - ENABLE_VNC=true         # 启用 VNC 服务器（可选）
       # - DISPLAY=:99             # 虚拟显示编号
       
       - PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-1}
@@ -87,24 +85,6 @@ services:
         reservations:
           memory: ${MEMORY_RESERVATION:-512}M
           cpus: '${CPU_RESERVATION:-0.5}'
-
-  # 可选：添加Nginx反向代理
-  nginx:
-    image: nginx:alpine
-    container_name: xianyu-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - xianyu-app
-    networks:
-      - xianyu-network
-    profiles:
-      - with-nginx
 
 networks:
   xianyu-network:

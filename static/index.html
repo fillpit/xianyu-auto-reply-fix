@@ -710,6 +710,33 @@
               </div>
             </div>
 
+            <div id="cloakbrowser-settings" class="card mt-4" style="display: none;">
+              <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                  <span class="fw-semibold"><i class="bi bi-shield-lock me-2"></i>CloakBrowser 指纹浏览器</span>
+                  <div class="text-muted small mt-1">配置外部指纹浏览器（CloakBrowser）的 CDP 连接地址，用于滑块验证与账密登录，避免依赖环境变量。</div>
+                </div>
+                <span class="badge bg-warning">管理员专用</span>
+              </div>
+              <div class="card-body">
+                <div class="row g-3 align-items-end">
+                  <div class="col-md-9">
+                    <label for="cloakbrowserCdpUrl" class="form-label">CDP 连接地址</label>
+                    <input type="text" class="form-control" id="cloakbrowserCdpUrl" placeholder="例如 http://127.0.0.1:9222 或 http://host.docker.internal:9222">
+                    <div class="form-text">
+                      留空则使用本地浏览器启动。填写后滑块验证与账密登录将优先通过 CDP 连接该指纹浏览器。
+                    </div>
+                  </div>
+                  <div class="col-md-3 d-grid">
+                    <button type="button" class="btn btn-primary" onclick="saveCloakBrowserSettings()">
+                      <i class="bi bi-check-circle me-1"></i>保存设置
+                    </button>
+                  </div>
+                </div>
+                <div id="cloakbrowserSettingsStatus" class="alert alert-info mt-3 mb-0 d-none"></div>
+              </div>
+            </div>
+
             <div class="about-history-panel account-diagnostics-history-panel mt-4">
               <div class="account-diagnostics-section-head">
                 <div>
@@ -4264,7 +4291,7 @@
 
   <!-- JS依赖 -->
   <script src="/static/lib/bootstrap/bootstrap.bundle.min.js"></script>
-  <script src="/static/js/app.js?v=1.2.9"></script>
+  <script src="/static/js/app.js"></script>
 
   <!-- 默认回复管理模态框 -->
   <div class="modal fade" id="defaultReplyModal" tabindex="-1" aria-labelledby="defaultReplyModalLabel" aria-hidden="true">
@@ -4839,6 +4866,34 @@
     </div>
   </div>
 
+  <!-- 恢复数据库确认模态框 -->
+  <div class="modal fade" id="restoreDbModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">
+            <i class="bi bi-exclamation-triangle text-danger me-2"></i>
+            确认恢复数据库
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p>恢复数据库将完全替换当前所有数据，包括所有用户、Cookie、卡券等信息。</p>
+          <div class="alert alert-danger">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <strong>警告：</strong>此操作不可撤销！
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="button" class="btn btn-danger" onclick="confirmRestoreDatabase()">
+            <i class="bi bi-upload me-1"></i>确认恢复
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 删除数据记录确认模态框 -->
   <div class="modal fade" id="deleteRecordModal" tabindex="-1">
     <div class="modal-dialog">
@@ -4981,36 +5036,6 @@
           <button type="button" class="btn btn-primary" onclick="saveAccountEdit()">
             <i class="bi bi-check-lg me-1"></i>保存
           </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 滑块验证模态框 -->
-  <div class="modal fade" id="captchaVerifyModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
-    <div class="modal-dialog modal-xl modal-dialog-centered">
-      <div class="modal-content">
-        <div class="modal-header bg-warning">
-          <h5 class="modal-title">
-            <i class="bi bi-shield-exclamation me-2"></i>
-            需要滑块验证
-          </h5>
-        </div>
-        <div class="modal-body p-0">
-          <div class="alert alert-info m-3 mb-0">
-            <i class="bi bi-info-circle me-2"></i>
-            <strong>提示：</strong>检测到滑块验证，请完成滑块验证后继续搜索。验证成功后将自动关闭此窗口。
-          </div>
-          <iframe id="captchaIframe" 
-                  style="width: 100%; height: 600px; border: none;"
-                  sandbox="allow-same-origin allow-scripts allow-forms">
-          </iframe>
-          <div id="captchaLoadingIndicator" class="text-center py-5">
-            <div class="spinner-border text-primary mb-3" role="status">
-              <span class="visually-hidden">加载中...</span>
-            </div>
-            <p class="text-muted">正在加载滑块验证...</p>
-          </div>
         </div>
       </div>
     </div>

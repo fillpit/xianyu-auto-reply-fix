@@ -122,7 +122,6 @@ class AutoUpdater:
         '.ace-tool/',
         '.pytest_cache/',
         'build/',
-        'nginx/',
         'dist/',
         'node_modules/',
         'qr_screenshots/',

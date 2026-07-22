@@ -85,7 +85,7 @@ AI 回复使用统一的 `model_name` / `api_key` / `base_url` / `api_type` 配�
 - **前端**：Bootstrap 5 + Vanilla JavaScript + Chart.js
 - **通信协议**：REST API + WebSocket + SSE
 - **自动化能力**：Playwright + DrissionPage
-- **部署方式**：Docker + Docker Compose + Nginx（可选）
+- **部署方式**：Docker + Docker Compose
 - **日志系统**：Loguru + 文件轮转 + 实时收集
 
 ```text

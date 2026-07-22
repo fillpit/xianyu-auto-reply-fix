@@ -56,14 +56,6 @@ from order_event_hub import order_event_hub, publish_order_update_event
 
 from loguru import logger
 
-# 刮刮乐远程控制路由
-try:
-    from api_captcha_remote import router as captcha_router
-    CAPTCHA_ROUTER_AVAILABLE = True
-except ImportError:
-    logger.warning("⚠️ api_captcha_remote 未找到，刮刮乐远程控制功能不可用")
-    CAPTCHA_ROUTER_AVAILABLE = False
-
 # 关键字文件路径
 KEYWORDS_FILE = Path(__file__).parent / "回复关键字.txt"
 
@@ -1137,13 +1129,6 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
-
-# 注册刮刮乐远程控制路由
-if CAPTCHA_ROUTER_AVAILABLE:
-    app.include_router(captcha_router)
-    logger.info("✅ 已注册刮刮乐远程控制路由: /api/captcha")
-else:
-    logger.warning("⚠️ 刮刮乐远程控制路由未注册")
 
 # 初始化文件日志收集器
 setup_file_logging()

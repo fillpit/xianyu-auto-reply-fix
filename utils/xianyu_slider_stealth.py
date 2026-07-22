@@ -35,6 +35,24 @@ from collections import defaultdict
 _PLAYWRIGHT_BROWSER_INSTALL_LOCK = threading.Lock()
 
 
+def _get_cloakbrowser_cdp_url():
+    """读取 CloakBrowser 指纹浏览器的 CDP 连接地址。
+
+    配置来源优先级：系统设置（页面配置） > 环境变量兜底。
+    页面配置通过系统设置表（system_settings.cloakbrowser_cdp_url）保存，
+    避免在部署环境中依赖环境变量。
+    """
+    try:
+        from db_manager import db_manager
+        url = db_manager.get_system_setting('cloakbrowser_cdp_url')
+        if url:
+            return url.strip()
+    except Exception as e:
+        logger.debug(f"从系统设置读取 CloakBrowser CDP 地址失败: {e}")
+    # 兜底：兼容仍通过环境变量注入旧部署
+    return (os.environ.get("XY_CLOAKBROWSER_CDP_URL", os.environ.get("XY_SLIDER_CDP_URL", "")).strip() or None)
+
+
 # ============================================================================
 # 1D Perlin 噪声实现（纯 Python，无外部依赖）
 # 用于生成连续平滑的非周期性随机序列，替代 sin 叠加
@@ -2356,10 +2374,10 @@ class XianyuSliderStealth:
             launched_with_persistent_profile = False
             self._launched_with_cdp = False
 
-            # 优先检测 CDP 环境变量，尝试连接外部指纹浏览器（如 CloakBrowser）
-            cdp_url = os.environ.get("XY_CLOAKBROWSER_CDP_URL", os.environ.get("XY_SLIDER_CDP_URL", "")).strip() or None
+            # 优先读取页面配置（系统设置）中的 CDP 地址，尝试连接外部指纹浏览器（如 CloakBrowser）
+            cdp_url = _get_cloakbrowser_cdp_url()
             if cdp_url:
-                logger.info(f"【{self.pure_user_id}】检测到 CDP 环境变量，尝试通过 CDP 连接外部浏览器: {cdp_url}")
+                logger.info(f"【{self.pure_user_id}】检测到 CDP 配置，尝试通过 CDP 连接外部浏览器: {cdp_url}")
                 try:
                     self.browser = self.playwright.chromium.connect_over_cdp(cdp_url)
                     if self.browser.contexts:
@@ -10787,8 +10805,8 @@ class XianyuSliderStealth:
                 '--disable-renderer-backgrounding',
             ]
 
-            # 优先检测 CDP 环境变量，尝试连接外部指纹浏览器（如 CloakBrowser）
-            cdp_url = os.environ.get("XY_CLOAKBROWSER_CDP_URL", os.environ.get("XY_SLIDER_CDP_URL", "")).strip() or None
+            # 优先读取页面配置（系统设置）中的 CDP 地址，尝试连接外部指纹浏览器（如 CloakBrowser）
+            cdp_url = _get_cloakbrowser_cdp_url()
             
             launched_with_cdp = False
             playwright_factory = self._get_sync_playwright_factory()

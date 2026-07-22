@@ -56,7 +56,6 @@ EXCLUDED_DIR_NAMES = {
     'data',
     'dist',
     'logs',
-    'nginx',
     'node_modules',
     'qr_screenshots',
     'tests',
