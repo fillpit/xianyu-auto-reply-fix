@@ -37,14 +37,7 @@ let currentItemsPage = 1; // 当前页码
 let itemsPerPage = 20; // 每页显示数量
 let totalItemsPages = 0; // 总页数
 let currentSearchKeyword = ''; // 当前搜索关键词
-let itemPublishPreviewUrls = [];
-let itemPublishInitialized = false;
-let itemPublishSubmitting = false;
-let itemPublishSavingMaterial = false;
-let itemPublishLoadedMaterialId = null;
-let itemPublishLoadedMaterialImages = [];
-let itemPublishMaterials = [];
-let itemPublishLogs = [];
+
 
 // 订单列表搜索和分页相关变量
 let allOrdersData = []; // 存储所有订单数据
@@ -125,9 +118,7 @@ function showSection(sectionName) {
     case 'accounts':         // 【账号管理菜单】
         loadCookies();
         break;
-    case 'item-publish':    // 【商品发布菜单】
-        loadItemPublish();
-        break;
+
     case 'items':           // 【商品管理菜单】
         loadItems();
         initItemsSearch(); // 确保搜索功能已初始化
@@ -186,9 +177,6 @@ function showSection(sectionName) {
     case 'user-management':  // 【用户管理菜单】
         loadUserManagement();
         break;
-    case 'online-im':        // 【在线客服菜单】
-        loadOnlineIm();
-        break;
     case 'blacklist':        // 【黑名单管理菜单】
         loadBlacklistPage();
         break;
@@ -199,10 +187,6 @@ function showSection(sectionName) {
 
     if (sectionName !== 'orders') {
         stopOrdersStream();
-    }
-
-    if (sectionName !== 'online-im') {
-        stopChatStream();
     }
 
     // 如果切换到非日志页面，停止自动刷新
@@ -10080,7 +10064,7 @@ function updatePresetSelection(selectedColor) {
 const DEFAULT_MENU_ITEMS = [
     { id: 'dashboard', name: '仪表盘', icon: 'bi-speedometer2', required: true },
     { id: 'accounts', name: '账号管理', icon: 'bi-person-circle', required: false },
-    { id: 'item-publish', name: '商品发布', icon: 'bi-bag-plus', required: false },
+
     { id: 'items', name: '商品管理', icon: 'bi-box-seam', required: false },
     { id: 'orders', name: '订单管理', icon: 'bi-receipt-cutoff', required: false },
     { id: 'auto-reply', name: '自动回复', icon: 'bi-chat-left-text', required: false },
@@ -10090,7 +10074,6 @@ const DEFAULT_MENU_ITEMS = [
     { id: 'auto-delivery', name: '自动发货', icon: 'bi-truck', required: false },
     { id: 'notification-channels', name: '通知渠道', icon: 'bi-bell', required: false },
     { id: 'message-notifications', name: '消息通知', icon: 'bi-chat-dots', required: false },
-    { id: 'online-im', name: '在线客服', icon: 'bi-headset', required: false },
     { id: 'blacklist', name: '黑名单管理', icon: 'bi-person-x', required: false },
     { id: 'system-settings', name: '系统设置', icon: 'bi-gear', required: true },
     { id: 'about', name: '关于', icon: 'bi-info-circle', required: true }
@@ -10882,756 +10865,6 @@ async function doRestartSystem() {
     } catch (error) {
         console.error('重启系统失败:', error);
         showToast('重启系统失败，请检查网络连接', 'danger');
-    }
-}
-
-// ================================
-// 【商品发布菜单】相关功能
-// ================================
-
-async function loadItemPublish() {
-    ensureItemPublishPageInitialized();
-    handlePublishDeliveryChoiceChange();
-    await Promise.all([
-        loadItemPublishAccounts(),
-        loadItemPublishMaterials(),
-        loadItemPublishLogs()
-    ]);
-}
-
-function ensureItemPublishPageInitialized() {
-    if (itemPublishInitialized) {
-        return;
-    }
-
-    const form = document.getElementById('itemPublishForm');
-    if (form) {
-        form.addEventListener('reset', () => {
-            window.setTimeout(() => clearItemPublishForm(true), 0);
-        });
-    }
-
-    itemPublishInitialized = true;
-}
-
-async function loadItemPublishAccounts() {
-    const select = document.getElementById('publishCookieId');
-    if (!select) {
-        return;
-    }
-
-    const currentValue = select.value;
-
-    try {
-        const response = await fetch(`${apiBase}/cookies/details`, {
-            headers: {
-                'Authorization': `Bearer ${authToken}`
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        const accounts = await response.json();
-        const availableAccounts = accounts.filter(account => account.has_cookie_value !== false && account.enabled !== false);
-
-        select.innerHTML = '<option value="">请选择账号</option>';
-
-        if (availableAccounts.length === 0) {
-            const option = document.createElement('option');
-            option.value = '';
-            option.disabled = true;
-            option.textContent = '暂无可用账号';
-            select.appendChild(option);
-            return;
-        }
-
-        availableAccounts.forEach(account => {
-            const option = document.createElement('option');
-            option.value = account.id;
-            option.textContent = buildItemPublishAccountLabel(account);
-            select.appendChild(option);
-        });
-
-        if (currentValue && availableAccounts.some(account => account.id === currentValue)) {
-            select.value = currentValue;
-        } else if (availableAccounts.length === 1) {
-            select.value = availableAccounts[0].id;
-        }
-    } catch (error) {
-        console.error('加载发布账号失败:', error);
-        select.innerHTML = '<option value="">加载账号失败</option>';
-        showToast('加载发布账号失败', 'danger');
-    }
-}
-
-function buildItemPublishAccountLabel(account) {
-    const remark = String(account.remark || '').trim();
-    const username = String(account.username || '').trim();
-    if (remark) {
-        return `${account.id} · ${remark}`;
-    }
-    if (username) {
-        return `${account.id} · ${username}`;
-    }
-    return account.id;
-}
-
-function handlePublishDeliveryChoiceChange() {
-    const choice = document.getElementById('publishDeliveryChoice')?.value || '包邮';
-    const postPriceWrap = document.getElementById('publishPostPriceWrap');
-    const postPriceInput = document.getElementById('publishPostPrice');
-    const shouldShowPostPrice = choice === '一口价';
-
-    if (postPriceWrap) {
-        postPriceWrap.style.display = shouldShowPostPrice ? '' : 'none';
-    }
-    if (postPriceInput) {
-        postPriceInput.required = shouldShowPostPrice;
-        if (!shouldShowPostPrice) {
-            postPriceInput.value = '';
-        }
-    }
-}
-
-function handlePublishImagesChange() {
-    const input = document.getElementById('publishImages');
-    if (!input) {
-        return;
-    }
-
-    const files = Array.from(input.files || []);
-    if (files.length > 0) {
-        itemPublishLoadedMaterialImages = [];
-    }
-    updateItemPublishMaterialModeBadge();
-    if (files.length > 9) {
-        showToast('单次最多上传 9 张图片', 'warning');
-        input.value = '';
-        clearItemPublishImagePreviews();
-        return;
-    }
-
-    renderItemPublishImagePreviews(files);
-}
-
-function renderItemPublishImagePreviews(files) {
-    const previewContainer = document.getElementById('publishImagePreviewList');
-    const summary = document.getElementById('publishImageSummary');
-
-    clearItemPublishImagePreviews();
-
-    if (!previewContainer) {
-        return;
-    }
-
-    if (!files || files.length === 0) {
-        previewContainer.innerHTML = '<div class="item-publish-preview-empty">尚未选择图片</div>';
-        if (summary) {
-            summary.textContent = '请上传 1-9 张图片，建议首图清晰展示商品主体。';
-        }
-        return;
-    }
-
-    const totalSize = files.reduce((sum, file) => sum + (file.size || 0), 0);
-    previewContainer.innerHTML = files.map((file, index) => {
-        const objectUrl = URL.createObjectURL(file);
-        itemPublishPreviewUrls.push(objectUrl);
-        return `
-            <div class="item-publish-preview-card">
-                <img src="${objectUrl}" alt="预览图 ${index + 1}">
-                <div class="item-publish-preview-meta">
-                    <div class="item-publish-preview-name" title="${escapeHtml(file.name || `图片 ${index + 1}`)}">${escapeHtml(file.name || `图片 ${index + 1}`)}</div>
-                    <div class="item-publish-preview-size">${formatFileSize(file.size || 0)}</div>
-                </div>
-            </div>
-        `;
-    }).join('');
-
-    if (summary) {
-        summary.textContent = `已选择 ${files.length} 张图片，总大小 ${formatFileSize(totalSize)}。`;
-    }
-}
-
-function clearItemPublishImagePreviews() {
-    itemPublishPreviewUrls.forEach(url => URL.revokeObjectURL(url));
-    itemPublishPreviewUrls = [];
-
-    const previewContainer = document.getElementById('publishImagePreviewList');
-    const summary = document.getElementById('publishImageSummary');
-    if (previewContainer) {
-        previewContainer.innerHTML = '<div class="item-publish-preview-empty">尚未选择图片</div>';
-    }
-    if (summary) {
-        summary.textContent = '请上传 1-9 张图片，建议首图清晰展示商品主体。';
-    }
-}
-
-function clearItemPublishForm(clearResult = true) {
-    clearItemPublishImagePreviews();
-    itemPublishLoadedMaterialId = null;
-    itemPublishLoadedMaterialImages = [];
-    updateItemPublishMaterialModeBadge();
-    handlePublishDeliveryChoiceChange();
-
-    const imagesInput = document.getElementById('publishImages');
-    if (imagesInput) {
-        imagesInput.value = '';
-    }
-
-    if (clearResult) {
-        hideItemPublishResult();
-    }
-}
-
-function hideItemPublishResult() {
-    const panel = document.getElementById('publishResultPanel');
-    const meta = document.getElementById('publishResultMeta');
-    if (panel) {
-        panel.style.display = 'none';
-    }
-    if (meta) {
-        meta.innerHTML = '';
-    }
-}
-
-function renderItemPublishResult(data, isSuccess) {
-    const panel = document.getElementById('publishResultPanel');
-    const badge = document.getElementById('publishResultBadge');
-    const title = document.getElementById('publishResultTitle');
-    const message = document.getElementById('publishResultMessage');
-    const meta = document.getElementById('publishResultMeta');
-
-    if (!panel || !badge || !title || !message || !meta) {
-        return;
-    }
-
-    panel.style.display = '';
-    badge.className = `badge ${isSuccess ? 'text-bg-success' : 'text-bg-danger'}`;
-    badge.textContent = isSuccess ? '成功' : '失败';
-    title.textContent = isSuccess ? '商品发布完成' : '商品发布失败';
-    message.textContent = data.message || (isSuccess ? '商品发布成功' : '商品发布失败');
-
-    const metaRows = [];
-    if (data.published_item_id) {
-        metaRows.push({ label: '商品ID', value: data.published_item_id });
-    }
-    if (data.item_url) {
-        metaRows.push({ label: '商品链接', value: data.item_url });
-    }
-    if (data.log_id) {
-        metaRows.push({ label: '发布日志', value: `#${data.log_id}` });
-    }
-
-    const syncResult = data.sync_result || {};
-    if (syncResult.message) {
-        metaRows.push({ label: '同步结果', value: syncResult.message });
-    }
-
-    const pageSync = syncResult.page_sync || {};
-    if (pageSync.current_count || pageSync.saved_count) {
-        metaRows.push({
-            label: '最近页同步',
-            value: `获取 ${pageSync.current_count || 0} 个商品，写入 ${pageSync.saved_count || 0} 个`
-        });
-    }
-
-    const fullSync = syncResult.full_sync || {};
-    if (fullSync.used) {
-        metaRows.push({
-            label: '补充同步',
-            value: fullSync.success
-                ? `全量扫描 ${fullSync.total_count || 0} 个商品，写入 ${fullSync.total_saved || 0} 个`
-                : (fullSync.error || '补充同步失败')
-        });
-    }
-
-    if (!isSuccess && data.detail) {
-        metaRows.push({ label: '错误详情', value: data.detail });
-    }
-
-    if (metaRows.length === 0) {
-        meta.innerHTML = '<div class="text-muted small">当前没有更多结果详情。</div>';
-        return;
-    }
-
-    meta.innerHTML = metaRows.map(row => `
-        <div class="item-publish-result-row">
-            <span class="item-publish-result-label">${escapeHtml(row.label)}</span>
-            <span class="item-publish-result-value">${escapeHtml(String(row.value || ''))}</span>
-        </div>
-    `).join('');
-}
-
-async function requestItemPublishJson(path, options = {}) {
-    const response = await fetch(`${apiBase}${path}`, {
-        ...options,
-        headers: {
-            'Authorization': `Bearer ${authToken}`,
-            ...(options.headers || {})
-        }
-    });
-    const responseText = await response.text();
-    let responseData = {};
-    try {
-        responseData = responseText ? JSON.parse(responseText) : {};
-    } catch (parseError) {
-        responseData = { detail: responseText || `HTTP ${response.status}` };
-    }
-    if (!response.ok) {
-        throw new Error(responseData.detail || responseData.message || `HTTP ${response.status}`);
-    }
-    return responseData;
-}
-
-function parseOptionalPublishNumber(value, label) {
-    const text = String(value ?? '').trim();
-    if (!text) {
-        return null;
-    }
-    const number = Number(text);
-    if (!Number.isFinite(number) || number < 0) {
-        throw new Error(`${label}必须是大于等于 0 的数字`);
-    }
-    return number;
-}
-
-function getItemPublishFormValues() {
-    return {
-        accountId: document.getElementById('publishCookieId')?.value || '',
-        title: document.getElementById('publishTitle')?.value.trim() || '',
-        description: document.getElementById('publishDescription')?.value.trim() || '',
-        currentPrice: document.getElementById('publishCurrentPrice')?.value.trim() || '',
-        originalPrice: document.getElementById('publishOriginalPrice')?.value.trim() || '',
-        deliveryChoice: document.getElementById('publishDeliveryChoice')?.value || '包邮',
-        postPrice: document.getElementById('publishPostPrice')?.value.trim() || '',
-        canSelfPickup: document.getElementById('publishCanSelfPickup')?.checked || false,
-        files: Array.from(document.getElementById('publishImages')?.files || [])
-    };
-}
-
-function validateItemPublishValues(values, { requireAccount = true, requireImages = true } = {}) {
-    if (requireAccount && !values.accountId) {
-        throw new Error('请选择发布账号');
-    }
-    if (!values.title) {
-        throw new Error('请输入商品标题');
-    }
-    if (!values.description) {
-        throw new Error('请输入商品描述');
-    }
-    if (values.files.length > 9) {
-        throw new Error('单次最多上传 9 张图片');
-    }
-    if (values.originalPrice && !values.currentPrice) {
-        throw new Error('填写原价时必须同时填写现价');
-    }
-    if (values.deliveryChoice === '一口价' && !values.postPrice) {
-        throw new Error('运费方式为一口价时必须填写邮费');
-    }
-    parseOptionalPublishNumber(values.currentPrice, '现价');
-    parseOptionalPublishNumber(values.originalPrice, '原价');
-    parseOptionalPublishNumber(values.postPrice, '邮费');
-
-    const imageCount = values.files.length || itemPublishLoadedMaterialImages.length;
-    if (requireImages && imageCount === 0) {
-        throw new Error('请至少上传 1 张商品图片或载入素材图片');
-    }
-}
-
-function fileToDataUrl(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(new Error(`读取图片失败: ${file.name || '未知图片'}`));
-        reader.readAsDataURL(file);
-    });
-}
-
-async function convertPublishFilesToImages(files) {
-    const images = [];
-    for (const [index, file] of files.entries()) {
-        if (file.type && !file.type.startsWith('image/')) {
-            throw new Error(`第 ${index + 1} 张文件不是图片`);
-        }
-        images.push({
-            filename: file.name || `publish-image-${index + 1}.jpg`,
-            data: await fileToDataUrl(file),
-            size: file.size || 0,
-            type: file.type || 'image/jpeg'
-        });
-    }
-    return images;
-}
-
-function buildItemPublishJsonPayload(values, images) {
-    return {
-        account_id: values.accountId,
-        title: values.title,
-        description: values.description,
-        price: parseOptionalPublishNumber(values.currentPrice, '现价'),
-        original_price: parseOptionalPublishNumber(values.originalPrice, '原价'),
-        images,
-        delivery_method: values.deliveryChoice,
-        postage: parseOptionalPublishNumber(values.postPrice, '邮费'),
-        can_self_pickup: values.canSelfPickup,
-        condition: '全新'
-    };
-}
-
-function buildItemPublishMaterialPayload(values, images) {
-    const payload = buildItemPublishJsonPayload({ ...values, accountId: values.accountId || 'material' }, images);
-    delete payload.account_id;
-    return payload;
-}
-
-function updateItemPublishMaterialModeBadge() {
-    const badge = document.getElementById('publishMaterialModeBadge');
-    if (!badge) {
-        return;
-    }
-    if (itemPublishLoadedMaterialId) {
-        badge.className = 'badge text-bg-info';
-        badge.textContent = `编辑素材 #${itemPublishLoadedMaterialId}`;
-    } else {
-        badge.className = 'badge text-bg-light border';
-        badge.textContent = '新建素材';
-    }
-}
-
-function getItemPublishImageSrc(image) {
-    const raw = String(image?.url || image?.image_url || image?.src || image?.data || image?.base64 || '').trim();
-    if (!raw) {
-        return '';
-    }
-    if (raw.startsWith('data:') || raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('/')) {
-        return raw;
-    }
-    return `data:image/jpeg;base64,${raw}`;
-}
-
-function renderItemPublishStoredImagePreviews(images) {
-    const previewContainer = document.getElementById('publishImagePreviewList');
-    const summary = document.getElementById('publishImageSummary');
-    clearItemPublishImagePreviews();
-    if (!previewContainer) {
-        return;
-    }
-    const safeImages = Array.isArray(images) ? images : [];
-    if (safeImages.length === 0) {
-        return;
-    }
-    previewContainer.innerHTML = safeImages.map((image, index) => {
-        const src = getItemPublishImageSrc(image);
-        const name = image?.filename || image?.name || `素材图片 ${index + 1}`;
-        return `
-            <div class="item-publish-preview-card">
-                <img src="${escapeHtml(src)}" alt="${escapeHtml(name)}">
-                <div class="item-publish-preview-meta">
-                    <div class="item-publish-preview-name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
-                    <div class="item-publish-preview-size">素材图片</div>
-                </div>
-            </div>
-        `;
-    }).join('');
-    if (summary) {
-        summary.textContent = `已载入素材图片 ${safeImages.length} 张；如重新选择文件，将替换素材图片。`;
-    }
-}
-
-function startNewItemPublishMaterial() {
-    itemPublishLoadedMaterialId = null;
-    itemPublishLoadedMaterialImages = [];
-    const form = document.getElementById('itemPublishForm');
-    if (form) {
-        form.reset();
-    }
-    clearItemPublishForm(false);
-    updateItemPublishMaterialModeBadge();
-}
-
-async function saveItemPublishMaterial() {
-    if (itemPublishSavingMaterial) {
-        return;
-    }
-    const button = document.getElementById('itemPublishSaveMaterialBtn');
-    const originalHtml = button?.innerHTML || '';
-
-    try {
-        const values = getItemPublishFormValues();
-        validateItemPublishValues(values, { requireAccount: false, requireImages: true });
-        const images = values.files.length > 0
-            ? await convertPublishFilesToImages(values.files)
-            : [...itemPublishLoadedMaterialImages];
-        if (images.length === 0) {
-            throw new Error('请至少上传 1 张商品图片或载入素材图片');
-        }
-
-        itemPublishSavingMaterial = true;
-        if (button) {
-            button.disabled = true;
-            button.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>保存中...';
-        }
-
-        const payload = buildItemPublishMaterialPayload(values, images);
-        const isEdit = Boolean(itemPublishLoadedMaterialId);
-        const result = await requestItemPublishJson(
-            isEdit ? `/product-materials/${encodeURIComponent(itemPublishLoadedMaterialId)}` : '/product-materials',
-            {
-                method: isEdit ? 'PUT' : 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            }
-        );
-        const material = result.material || {};
-        itemPublishLoadedMaterialId = material.id || itemPublishLoadedMaterialId;
-        itemPublishLoadedMaterialImages = Array.isArray(material.images) ? material.images : images;
-        const imageInput = document.getElementById('publishImages');
-        if (imageInput) {
-            imageInput.value = '';
-        }
-        renderItemPublishStoredImagePreviews(itemPublishLoadedMaterialImages);
-        updateItemPublishMaterialModeBadge();
-        showToast(result.message || (isEdit ? '商品素材更新成功' : '商品素材保存成功'), 'success');
-        await loadItemPublishMaterials();
-    } catch (error) {
-        console.error('保存商品素材失败:', error);
-        showToast(error.message || '保存商品素材失败', 'danger');
-    } finally {
-        itemPublishSavingMaterial = false;
-        if (button) {
-            button.disabled = false;
-            button.innerHTML = originalHtml || '<i class="bi bi-save me-1"></i>保存素材';
-        }
-    }
-}
-
-async function loadItemPublishMaterials() {
-    const container = document.getElementById('publishMaterialList');
-    if (!container) {
-        return;
-    }
-    container.innerHTML = '<div class="text-muted small">正在加载素材...</div>';
-    try {
-        const data = await requestItemPublishJson('/product-materials?page=1&page_size=20');
-        itemPublishMaterials = data.list || [];
-        renderItemPublishMaterials();
-    } catch (error) {
-        console.error('加载商品素材失败:', error);
-        container.innerHTML = '<div class="item-publish-preview-empty">加载素材失败</div>';
-    }
-}
-
-function renderItemPublishMaterials() {
-    const container = document.getElementById('publishMaterialList');
-    if (!container) {
-        return;
-    }
-    if (!itemPublishMaterials.length) {
-        container.innerHTML = '<div class="item-publish-preview-empty">暂无素材，填写表单后可点击“保存素材”。</div>';
-        return;
-    }
-
-    container.innerHTML = itemPublishMaterials.map(material => {
-        const image = Array.isArray(material.images) && material.images.length ? material.images[0] : null;
-        const imageSrc = getItemPublishImageSrc(image);
-        const priceText = material.price !== null && material.price !== undefined ? `¥${material.price}` : '默认价';
-        const imageCount = Array.isArray(material.images) ? material.images.length : 0;
-        return `
-            <div class="item-publish-side-item ${itemPublishLoadedMaterialId === material.id ? 'is-active' : ''}">
-                ${imageSrc ? `<img class="item-publish-side-thumb" src="${escapeHtml(imageSrc)}" alt="素材图">` : '<div class="item-publish-side-thumb is-empty"><i class="bi bi-image"></i></div>'}
-                <div class="item-publish-side-main">
-                    <div class="item-publish-side-title" title="${escapeHtml(material.title || '')}">${escapeHtml(material.title || '未命名素材')}</div>
-                    <div class="item-publish-side-meta">${escapeHtml(priceText)} · ${imageCount} 张图</div>
-                    <div class="item-publish-side-actions">
-                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="loadItemPublishMaterialToForm(${material.id})">载入</button>
-                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteItemPublishMaterial(${material.id})">删除</button>
-                    </div>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-function loadItemPublishMaterialToForm(materialId) {
-    const material = itemPublishMaterials.find(item => Number(item.id) === Number(materialId));
-    if (!material) {
-        showToast('未找到商品素材，请刷新后重试', 'warning');
-        return;
-    }
-
-    document.getElementById('publishTitle').value = material.title || '';
-    document.getElementById('publishDescription').value = material.description || '';
-    document.getElementById('publishCurrentPrice').value = material.price ?? '';
-    document.getElementById('publishOriginalPrice').value = material.original_price ?? '';
-    document.getElementById('publishDeliveryChoice').value = material.delivery_method || '包邮';
-    document.getElementById('publishPostPrice').value = material.postage ?? '';
-    document.getElementById('publishCanSelfPickup').checked = Boolean(material.can_self_pickup);
-    const imageInput = document.getElementById('publishImages');
-    if (imageInput) {
-        imageInput.value = '';
-    }
-
-    itemPublishLoadedMaterialId = material.id;
-    itemPublishLoadedMaterialImages = Array.isArray(material.images) ? material.images : [];
-    handlePublishDeliveryChoiceChange();
-    renderItemPublishStoredImagePreviews(itemPublishLoadedMaterialImages);
-    updateItemPublishMaterialModeBadge();
-    renderItemPublishMaterials();
-    showToast('已载入商品素材，可直接发布或继续编辑', 'info');
-}
-
-async function deleteItemPublishMaterial(materialId) {
-    if (!confirm('确定删除该商品素材吗？')) {
-        return;
-    }
-    try {
-        const result = await requestItemPublishJson(`/product-materials/${encodeURIComponent(materialId)}`, { method: 'DELETE' });
-        if (Number(itemPublishLoadedMaterialId) === Number(materialId)) {
-            startNewItemPublishMaterial();
-        }
-        showToast(result.message || '商品素材已删除', 'success');
-        await loadItemPublishMaterials();
-    } catch (error) {
-        console.error('删除商品素材失败:', error);
-        showToast(error.message || '删除商品素材失败', 'danger');
-    }
-}
-
-function getItemPublishStatusBadge(status) {
-    const statusMap = {
-        success: { text: '成功', cls: 'text-bg-success' },
-        failed: { text: '失败', cls: 'text-bg-danger' },
-        publishing: { text: '发布中', cls: 'text-bg-primary' },
-        pending: { text: '等待中', cls: 'text-bg-secondary' }
-    };
-    const item = statusMap[status] || { text: status || '未知', cls: 'text-bg-light text-dark border' };
-    return `<span class="badge ${item.cls}">${escapeHtml(item.text)}</span>`;
-}
-
-async function loadItemPublishLogs() {
-    const container = document.getElementById('publishLogList');
-    if (!container) {
-        return;
-    }
-    container.innerHTML = '<div class="text-muted small">正在加载发布记录...</div>';
-    try {
-        const data = await requestItemPublishJson('/publish-logs?page=1&page_size=10');
-        itemPublishLogs = data.list || [];
-        renderItemPublishLogs();
-    } catch (error) {
-        console.error('加载发布记录失败:', error);
-        container.innerHTML = '<div class="item-publish-preview-empty">加载发布记录失败</div>';
-    }
-}
-
-function renderItemPublishLogs() {
-    const container = document.getElementById('publishLogList');
-    if (!container) {
-        return;
-    }
-    if (!itemPublishLogs.length) {
-        container.innerHTML = '<div class="item-publish-preview-empty">暂无发布记录</div>';
-        return;
-    }
-
-    container.innerHTML = itemPublishLogs.map(log => {
-        const timeText = log.updated_at || log.created_at || '';
-        const itemLink = log.item_url
-            ? `<a href="${escapeHtml(log.item_url)}" target="_blank" rel="noopener">查看商品</a>`
-            : (log.item_id ? `商品ID: ${escapeHtml(log.item_id)}` : '暂无商品链接');
-        const detail = log.error_message || log.sync_message || '';
-        return `
-            <div class="item-publish-log-item">
-                <div class="d-flex justify-content-between align-items-start gap-2">
-                    <div class="item-publish-side-title" title="${escapeHtml(log.title || '')}">${escapeHtml(log.title || '未命名商品')}</div>
-                    ${getItemPublishStatusBadge(log.status)}
-                </div>
-                <div class="item-publish-side-meta">账号 ${escapeHtml(log.account_id || '-')} · ${escapeHtml(timeText || '-')}</div>
-                <div class="item-publish-side-meta">${itemLink}</div>
-                ${detail ? `<div class="item-publish-log-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>` : ''}
-            </div>
-        `;
-    }).join('');
-}
-
-async function submitItemPublishForm() {
-    if (itemPublishSubmitting) {
-        return;
-    }
-
-    const values = getItemPublishFormValues();
-    const submitButton = document.getElementById('itemPublishSubmitBtn');
-
-    try {
-        validateItemPublishValues(values, { requireAccount: true, requireImages: true });
-    } catch (error) {
-        showToast(error.message || '请完善发布信息', 'warning');
-        return;
-    }
-
-    itemPublishSubmitting = true;
-    if (submitButton) {
-        submitButton.disabled = true;
-        submitButton.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>发布中...';
-    }
-
-    try {
-        let responseData;
-        if (values.files.length > 0) {
-            const formData = new FormData();
-            formData.append('cookie_id', values.accountId);
-            formData.append('title', values.title);
-            formData.append('description', values.description);
-            formData.append('current_price', values.currentPrice);
-            formData.append('original_price', values.originalPrice);
-            formData.append('delivery_choice', values.deliveryChoice);
-            formData.append('post_price', values.postPrice);
-            formData.append('can_self_pickup', values.canSelfPickup ? 'true' : 'false');
-            values.files.forEach(file => formData.append('images', file));
-
-            const response = await fetch(`${apiBase}/item-publish`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${authToken}`
-                },
-                body: formData
-            });
-
-            const responseText = await response.text();
-            try {
-                responseData = responseText ? JSON.parse(responseText) : {};
-            } catch (parseError) {
-                responseData = { detail: responseText || `HTTP ${response.status}` };
-            }
-
-            if (!response.ok) {
-                throw new Error(responseData.detail || responseData.message || `HTTP ${response.status}`);
-            }
-        } else {
-            const payload = buildItemPublishJsonPayload(values, itemPublishLoadedMaterialImages);
-            responseData = await requestItemPublishJson('/product-publish', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-        }
-
-        renderItemPublishResult(responseData, true);
-        showToast(responseData.message || '商品发布成功', 'success');
-        await loadItemPublishLogs();
-    } catch (error) {
-        console.error('发布商品失败:', error);
-        const errorMessage = error.message || '发布商品失败';
-        renderItemPublishResult({ message: errorMessage, detail: errorMessage }, false);
-        showToast(errorMessage, 'danger');
-    } finally {
-        itemPublishSubmitting = false;
-        if (submitButton) {
-            submitButton.disabled = false;
-            submitButton.innerHTML = '<i class="bi bi-cloud-upload me-1"></i>发布商品';
-        }
     }
 }
 
@@ -16041,23 +15274,6 @@ async function saveOutgoingConfigs(event) {
     }
 }
 
-// 加载注册设置
-async function loadRegistrationSettings() {
-    try {
-        const response = await fetch('/registration-status');
-        if (response.ok) {
-            const data = await response.json();
-            const checkbox = document.getElementById('registrationEnabled');
-            if (checkbox) {
-                checkbox.checked = data.enabled;
-            }
-        }
-    } catch (error) {
-        console.error('加载注册设置失败:', error);
-        showToast('加载注册设置失败', 'danger');
-    }
-}
-
 // 加载默认登录信息设置
 async function loadLoginInfoSettings() {
     try {
@@ -16070,17 +15286,8 @@ async function loadLoginInfoSettings() {
         if (response.ok) {
             const settings = await response.json();
             const checkbox = document.getElementById('showDefaultLoginInfo');
-            const captchaCheckbox = document.getElementById('loginCaptchaEnabled');
-
             if (checkbox && settings.show_default_login_info !== undefined) {
                 checkbox.checked = settings.show_default_login_info === 'true';
-            }
-
-            if (captchaCheckbox && settings.login_captcha_enabled !== undefined) {
-                captchaCheckbox.checked = settings.login_captcha_enabled === 'true';
-            } else if (captchaCheckbox) {
-                // 默认开启
-                captchaCheckbox.checked = true;
             }
         }
     } catch (error) {
@@ -16089,99 +15296,34 @@ async function loadLoginInfoSettings() {
     }
 }
 
-// 更新登录与注册设置
+// 更新登录设置
 async function updateLoginInfoSettings() {
-    const registrationCheckbox = document.getElementById('registrationEnabled');
     const checkbox = document.getElementById('showDefaultLoginInfo');
-    const captchaCheckbox = document.getElementById('loginCaptchaEnabled');
-    const statusDiv = document.getElementById('loginInfoStatus');
-    const statusText = document.getElementById('loginInfoStatusText');
+    if (!checkbox) return;
 
     try {
-        let messages = [];
+        const enabled = checkbox.checked;
+        const response = await fetch('/login-info-settings', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({ enabled: enabled })
+        });
 
-        // 更新用户注册设置
-        if (registrationCheckbox) {
-            const regEnabled = registrationCheckbox.checked;
-            const regResponse = await fetch('/registration-settings', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${authToken}`
-                },
-                body: JSON.stringify({ enabled: regEnabled })
-            });
-
-            if (regResponse.ok) {
-                messages.push(regEnabled ? '用户注册已开启' : '用户注册已关闭');
-            } else {
-                const errorData = await regResponse.json();
-                showToast(`更新注册设置失败: ${errorData.detail || '未知错误'}`, 'danger');
-                return;
-            }
-        }
-
-        // 更新显示默认登录信息设置
-        if (checkbox) {
-            const enabled = checkbox.checked;
-            const response = await fetch('/login-info-settings', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${authToken}`
-                },
-                body: JSON.stringify({ enabled: enabled })
-            });
-
-            if (response.ok) {
-                messages.push(enabled ? '默认登录信息显示已开启' : '默认登录信息显示已关闭');
-            } else {
-                const errorData = await response.json();
-                showToast(`更新默认登录信息设置失败: ${errorData.detail || '未知错误'}`, 'danger');
-                return;
-            }
-        }
-
-        // 更新登录验证码设置
-        if (captchaCheckbox) {
-            const captchaEnabled = captchaCheckbox.checked;
-            const captchaResponse = await fetch('/login-captcha-settings', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${authToken}`
-                },
-                body: JSON.stringify({ enabled: captchaEnabled })
-            });
-
-            if (captchaResponse.ok) {
-                messages.push(captchaEnabled ? '登录验证码已开启' : '登录验证码已关闭');
-            } else {
-                const errorData = await captchaResponse.json();
-                showToast(`更新登录验证码设置失败: ${errorData.detail || '未知错误'}`, 'danger');
-                return;
-            }
-        }
-
-        // 显示成功消息
-        const message = messages.join('，');
-        showToast('设置保存成功', 'success');
-
-        // 显示状态信息
-        if (statusDiv && statusText) {
-            statusText.textContent = message;
-            statusDiv.style.display = 'block';
-
-            // 3秒后隐藏状态信息
-            setTimeout(() => {
-                statusDiv.style.display = 'none';
-            }, 3000);
+        if (response.ok) {
+            showToast(enabled ? '默认登录信息显示已开启' : '默认登录信息显示已关闭', 'success');
+        } else {
+            const errorData = await response.json();
+            showToast(`更新默认登录信息设置失败: ${errorData.detail || '未知错误'}`, 'danger');
         }
     } catch (error) {
         console.error('更新登录信息设置失败:', error);
         showToast('更新登录信息设置失败', 'danger');
     }
 }
+
 
 // ================================
 // 订单管理功能

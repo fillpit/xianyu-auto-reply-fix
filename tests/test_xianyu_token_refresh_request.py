@@ -1,6 +1,7 @@
 import unittest
+from unittest import mock
 
-from XianyuAutoAsync import XianyuLive
+from XianyuAutoAsync import ConnectionState, XianyuLive
 
 
 class _FakeTokenRefreshResponse:

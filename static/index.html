@@ -83,12 +83,6 @@
           <span>账号管理</span>
         </a>
       </div>
-      <div class="nav-item" data-menu-id="item-publish">
-        <a href="javascript:void(0)" class="nav-link" onclick="showSection('item-publish')">
-          <i class="bi bi-bag-plus"></i>
-          <span>商品发布</span>
-        </a>
-      </div>
       <div class="nav-item" data-menu-id="items">
         <a href="javascript:void(0)" class="nav-link" onclick="showSection('items')">
           <i class="bi bi-box-seam"></i>
@@ -141,12 +135,6 @@
         <a href="javascript:void(0)" class="nav-link" onclick="showSection('message-notifications')">
           <i class="bi bi-chat-dots"></i>
           <span>消息通知</span>
-        </a>
-      </div>
-      <div class="nav-item" data-menu-id="online-im">
-        <a href="javascript:void(0)" class="nav-link" onclick="showSection('online-im')">
-          <i class="bi bi-headset"></i>
-          <span>在线客服</span>
         </a>
       </div>
       <div class="nav-item" data-menu-id="blacklist">
@@ -813,198 +801,7 @@
       </div>
     </div>
 
-    <div id="item-publish-section" class="content-section">
-      <div class="content-header">
-        <h2 class="mb-0">
-          <i class="bi bi-bag-plus me-2"></i>
-          商品发布
-        </h2>
-        <p class="text-muted mb-0">选择账号填写商品信息，发布成功后会自动同步到商品管理列表</p>
-      </div>
 
-      <div class="content-body">
-        <div class="row g-4 item-publish-layout">
-          <div class="col-xl-8">
-            <div class="card item-publish-form-card">
-              <div class="card-header d-flex justify-content-between align-items-center">
-                <div>
-                  <h5 class="mb-1">发布表单</h5>
-                  <div class="text-muted small">第一版支持单商品发布、多图上传、价格与运费配置。</div>
-                </div>
-                <div class="d-flex align-items-center gap-2">
-                  <span class="badge text-bg-light border" id="publishMaterialModeBadge">新建素材</span>
-                  <span class="badge text-bg-light border">单商品</span>
-                </div>
-              </div>
-              <div class="card-body">
-                <form id="itemPublishForm" onsubmit="submitItemPublishForm(); return false;">
-                  <div class="row g-3">
-                    <div class="col-md-6">
-                      <label for="publishCookieId" class="form-label">发布账号</label>
-                      <select class="form-select" id="publishCookieId" required>
-                        <option value="">请选择账号</option>
-                      </select>
-                    </div>
-                    <div class="col-md-6">
-                      <label for="publishDeliveryChoice" class="form-label">运费方式</label>
-                      <select class="form-select" id="publishDeliveryChoice" onchange="handlePublishDeliveryChoiceChange()" required>
-                        <option value="包邮">包邮</option>
-                        <option value="按距离计费">按距离计费</option>
-                        <option value="一口价">一口价</option>
-                        <option value="无需邮寄">无需邮寄</option>
-                      </select>
-                    </div>
-
-                    <div class="col-12">
-                      <label for="publishTitle" class="form-label">商品标题</label>
-                      <input type="text" class="form-control" id="publishTitle" maxlength="60" placeholder="输入商品标题" required>
-                    </div>
-
-                    <div class="col-12">
-                      <label for="publishDescription" class="form-label">商品描述</label>
-                      <textarea class="form-control" id="publishDescription" rows="5" maxlength="5000" placeholder="输入商品描述，建议包含成色、规格、发货说明等信息" required></textarea>
-                    </div>
-
-                    <div class="col-md-4">
-                      <label for="publishCurrentPrice" class="form-label">现价</label>
-                      <div class="input-group">
-                        <span class="input-group-text">¥</span>
-                        <input type="number" class="form-control" id="publishCurrentPrice" min="0" step="0.01" placeholder="留空则使用默认价">
-                      </div>
-                    </div>
-
-                    <div class="col-md-4">
-                      <label for="publishOriginalPrice" class="form-label">原价</label>
-                      <div class="input-group">
-                        <span class="input-group-text">¥</span>
-                        <input type="number" class="form-control" id="publishOriginalPrice" min="0" step="0.01" placeholder="可选">
-                      </div>
-                    </div>
-
-                    <div class="col-md-4" id="publishPostPriceWrap" style="display: none;">
-                      <label for="publishPostPrice" class="form-label">邮费</label>
-                      <div class="input-group">
-                        <span class="input-group-text">¥</span>
-                        <input type="number" class="form-control" id="publishPostPrice" min="0" step="0.01" placeholder="请输入邮费">
-                      </div>
-                    </div>
-
-                    <div class="col-12">
-                      <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" id="publishCanSelfPickup">
-                        <label class="form-check-label" for="publishCanSelfPickup">支持买家自提</label>
-                      </div>
-                    </div>
-
-                    <div class="col-12">
-                      <label for="publishImages" class="form-label">商品图片</label>
-                      <input
-                        type="file"
-                        class="form-control"
-                        id="publishImages"
-                        accept="image/*"
-                        multiple
-                        onchange="handlePublishImagesChange()"
-                        required
-                      >
-                      <div class="form-text" id="publishImageSummary">请上传 1-9 张图片，建议首图清晰展示商品主体。</div>
-                    </div>
-
-                    <div class="col-12">
-                      <div id="publishImagePreviewList" class="item-publish-preview-list">
-                        <div class="item-publish-preview-empty">尚未选择图片</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="d-flex flex-wrap gap-2 mt-4">
-                    <button type="submit" class="btn btn-primary" id="itemPublishSubmitBtn">
-                      <i class="bi bi-cloud-upload me-1"></i>发布商品
-                    </button>
-                    <button type="button" class="btn btn-outline-success" id="itemPublishSaveMaterialBtn" onclick="saveItemPublishMaterial()">
-                      <i class="bi bi-save me-1"></i>保存素材
-                    </button>
-                    <button type="button" class="btn btn-outline-secondary" onclick="document.getElementById('itemPublishForm').reset(); clearItemPublishForm(false);">
-                      <i class="bi bi-arrow-counterclockwise me-1"></i>重置表单
-                    </button>
-                    <button type="button" class="btn btn-outline-secondary" onclick="startNewItemPublishMaterial()">
-                      <i class="bi bi-plus-circle me-1"></i>新建素材
-                    </button>
-                    <button type="button" class="btn btn-outline-dark" onclick="showSection('items')">
-                      <i class="bi bi-box-seam me-1"></i>查看商品管理
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          </div>
-
-          <div class="col-xl-4">
-            <div class="card item-publish-guide-card">
-              <div class="card-header">
-                <h5 class="mb-0">发布说明</h5>
-              </div>
-              <div class="card-body">
-                <div class="item-publish-guide-list">
-                  <div class="item-publish-guide-item">
-                    <span class="item-publish-guide-index">1</span>
-                    <div>优先选择启用中的账号进行发布，发布时会自动读取该账号默认地址。</div>
-                  </div>
-                  <div class="item-publish-guide-item">
-                    <span class="item-publish-guide-index">2</span>
-                    <div>图片会直接上传到闲鱼 CDN，发布成功后系统会自动同步最新商品列表。</div>
-                  </div>
-                  <div class="item-publish-guide-item">
-                    <span class="item-publish-guide-index">3</span>
-                    <div>现价可留空使用默认价格；填写原价时，必须同时填写现价。</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="card item-publish-result-card mt-4" id="publishResultPanel" style="display: none;">
-              <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">发布结果</h5>
-                <span class="badge" id="publishResultBadge">处理中</span>
-              </div>
-              <div class="card-body">
-                <div class="mb-2 fw-semibold" id="publishResultTitle">等待发布</div>
-                <div class="text-muted small mb-3" id="publishResultMessage">提交后这里会展示发布结果和同步状态。</div>
-                <div id="publishResultMeta" class="item-publish-result-meta"></div>
-              </div>
-            </div>
-
-            <div class="card item-publish-material-card mt-4">
-              <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">素材库</h5>
-                <button type="button" class="btn btn-sm btn-outline-primary" onclick="loadItemPublishMaterials()">
-                  <i class="bi bi-arrow-clockwise me-1"></i>刷新
-                </button>
-              </div>
-              <div class="card-body">
-                <div id="publishMaterialList" class="item-publish-side-list">
-                  <div class="item-publish-preview-empty">暂无素材</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="card item-publish-log-card mt-4">
-              <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">发布记录</h5>
-                <button type="button" class="btn btn-sm btn-outline-primary" onclick="loadItemPublishLogs()">
-                  <i class="bi bi-arrow-clockwise me-1"></i>刷新
-                </button>
-              </div>
-              <div class="card-body">
-                <div id="publishLogList" class="item-publish-side-list">
-                  <div class="item-publish-preview-empty">暂无发布记录</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- 商品管理内容 -->
     <div id="items-section" class="content-section">
@@ -2915,107 +2712,6 @@
       </div>
     </div>
 
-    <!-- 在线客服内容 -->
-    <div id="online-im-section" class="content-section">
-      <div class="content-header">
-        <h2 class="mb-0">
-          <i class="bi bi-headset me-2"></i>
-          在线客服
-        </h2>
-        <p class="text-muted mb-0">直连闲鱼IM会话，支持实时收发、历史分页与商品回复联动</p>
-      </div>
-      <div class="content-body p-0" style="flex: 1; overflow: hidden;">
-        <div class="d-flex h-100" id="chatContainer">
-          <div class="chat-account-list" id="chatAccountList">
-            <div class="chat-panel-header">
-              <span>账号列表</span>
-              <button class="btn btn-link btn-sm p-0" onclick="refreshChatAccounts()" title="刷新"><i class="bi bi-arrow-clockwise"></i></button>
-            </div>
-            <div class="chat-panel-body" id="chatAccountsBody">
-              <div class="text-center text-muted py-4 small">加载中...</div>
-            </div>
-          </div>
-          <div class="chat-session-list" id="chatSessionList">
-            <div class="chat-panel-header">
-              <span>会话列表</span>
-              <button class="btn btn-link btn-sm p-0" onclick="refreshChatSessions()" title="刷新"><i class="bi bi-arrow-clockwise"></i></button>
-            </div>
-            <div class="p-2 border-bottom">
-              <input type="text" class="form-control form-control-sm" id="chatSearchInput" placeholder="搜索会话..." oninput="filterChatSessions()">
-            </div>
-            <div class="chat-panel-body" id="chatSessionsBody">
-              <div class="text-center text-muted py-4 small">请先选择账号</div>
-            </div>
-          </div>
-          <div class="chat-main-area" id="chatMainArea">
-            <div class="chat-main-placeholder d-flex flex-column align-items-center justify-content-center h-100 text-muted" id="chatMainPlaceholder">
-              <i class="bi bi-chat-square-text" style="font-size: 3rem;"></i>
-              <p class="mt-2">请选择一个会话查看聊天记录</p>
-            </div>
-            <div class="chat-active-area d-none" id="chatActiveArea">
-              <div class="d-flex h-100">
-                <div class="chat-msg-panel">
-                  <div class="chat-header border-bottom px-3 py-2 d-flex align-items-center justify-content-between">
-                    <div>
-                      <strong id="chatHeaderName">-</strong>
-                      <small class="text-muted ms-2" id="chatHeaderItemId"></small>
-                      <div class="small text-muted mt-1" id="chatHeaderMeta"></div>
-                    </div>
-                    <div class="d-flex gap-1">
-                      <button class="btn btn-sm btn-outline-secondary" onclick="loadMoreChatMessages()" title="加载更多"><i class="bi bi-clock-history"></i></button>
-                      <button class="btn btn-sm btn-outline-success" onclick="openOrdersFromChat()" title="跳转到订单页查看该买家的订单"><i class="bi bi-receipt"></i><span class="d-none d-xl-inline ms-1">订单</span></button>
-                      <button class="btn btn-sm btn-outline-danger" onclick="toggleChatBlacklist()" title="拉黑当前买家" id="chatBlacklistBtn" disabled><i class="bi bi-person-slash"></i><span class="d-none d-xl-inline ms-1" id="chatBlacklistBtnText">拉黑</span></button>
-                      <button class="btn btn-sm btn-outline-primary" onclick="toggleReplyPanel()" title="商品回复" id="btnToggleReply"><i class="bi bi-chat-right-text"></i></button>
-                    </div>
-                  </div>
-                  <div class="chat-messages-area" id="chatMessagesArea"></div>
-                  <div class="chat-input-area border-top p-2">
-                    <div class="d-flex gap-2">
-                      <textarea class="form-control form-control-sm" id="chatInputBox" rows="2" placeholder="输入消息... (Enter发送, Shift+Enter换行)" onkeydown="handleChatInputKeydown(event)"></textarea>
-                      <button class="btn btn-primary btn-sm align-self-end" onclick="sendChatMessage()" id="chatSendBtn" style="min-width: 60px;">发送</button>
-                    </div>
-                  </div>
-                </div>
-                <div class="chat-reply-panel d-none" id="chatReplyPanel">
-                  <div class="chat-panel-header">
-                    <span>商品回复设置</span>
-                    <button class="btn btn-link btn-sm p-0" onclick="toggleReplyPanel()" title="关闭"><i class="bi bi-x-lg"></i></button>
-                  </div>
-                  <div class="chat-reply-body" id="chatReplyBody">
-                    <div class="p-3">
-                      <div class="mb-3">
-                        <label class="form-label fw-bold small">当前商品</label>
-                        <div class="input-group input-group-sm">
-                          <span class="input-group-text">ID</span>
-                          <input type="text" class="form-control" id="replyItemId" readonly>
-                        </div>
-                      </div>
-                      <div class="mb-3">
-                        <label class="form-label fw-bold small">指定商品回复 <span class="text-muted fw-normal">(优先级最高)</span></label>
-                        <textarea class="form-control form-control-sm" id="replyItemReply" rows="2" placeholder="输入该商品的固定回复..."></textarea>
-                      </div>
-                      <div class="mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-1">
-                          <label class="form-label fw-bold small mb-0">商品关键词</label>
-                          <button class="btn btn-outline-primary btn-sm" onclick="addKeywordRow()" style="font-size:11px;"><i class="bi bi-plus"></i> 添加</button>
-                        </div>
-                        <div id="replyKeywordsList"></div>
-                      </div>
-                      <button class="btn btn-primary btn-sm w-100 mb-3" onclick="saveItemKeywords()"><i class="bi bi-check-lg me-1"></i>保存回复设置</button>
-                      <div class="border-top pt-3">
-                        <label class="form-label fw-bold small">一键复用到其他商品</label>
-                        <div id="copyTargetItems" class="mb-2" style="max-height: 150px; overflow-y: auto;"></div>
-                        <button class="btn btn-outline-success btn-sm w-100" onclick="copyKeywordsToSelected()"><i class="bi bi-files me-1"></i>复制到选中商品</button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- 商品搜索内容 -->
     <div id="item-search-section" class="content-section">
@@ -3564,29 +3260,17 @@
           </div>
         </div>
 
-        <!-- 第二行：登录与注册设置 (仅管理员可见，占满两列) -->
+        <!-- 第二行：登录设置 (仅管理员可见，占满两列) -->
         <div id="login-info-settings" class="row mt-4" style="display: none;">
           <div class="col-12">
             <div class="card">
               <div class="card-header">
-                <i class="bi bi-gear me-2"></i>登录与注册设置
+                <i class="bi bi-gear me-2"></i>登录设置
                 <span class="badge bg-warning ms-2">管理员专用</span>
               </div>
               <div class="card-body">
                 <div class="row">
-                  <div class="col-md-4">
-                    <div class="form-check form-switch">
-                      <input class="form-check-input" type="checkbox" id="registrationEnabled">
-                      <label class="form-check-label" for="registrationEnabled">
-                        <strong>开启用户注册</strong>
-                      </label>
-                    </div>
-                    <div class="form-text">
-                      <i class="bi bi-info-circle me-1"></i>
-                      关闭后，新用户将无法注册账号
-                    </div>
-                  </div>
-                  <div class="col-md-4">
+                  <div class="col-md-6">
                     <div class="form-check form-switch">
                       <input class="form-check-input" type="checkbox" id="showDefaultLoginInfo">
                       <label class="form-check-label" for="showDefaultLoginInfo">
@@ -3596,18 +3280,6 @@
                     <div class="form-text">
                       <i class="bi bi-info-circle me-1"></i>
                       登录页面显示默认用户名和密码
-                    </div>
-                  </div>
-                  <div class="col-md-4">
-                    <div class="form-check form-switch">
-                      <input class="form-check-input" type="checkbox" id="loginCaptchaEnabled">
-                      <label class="form-check-label" for="loginCaptchaEnabled">
-                        <strong>登录页面安全验证</strong>
-                      </label>
-                    </div>
-                    <div class="form-text">
-                      <i class="bi bi-shield-check me-1"></i>
-                      登录时需要输入图形验证码
                     </div>
                   </div>
                 </div>
